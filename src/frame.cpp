@@ -18,71 +18,112 @@
 #include <string>
 #include <cstring>
 #include <cctype>
+#include <cmath>
 
 #include "frame.h"
 #include "password_manager.h"
 #include "crypto.h"
 #include "hatten_font.h"
+#include "sun_moon_font.h"
 
 // ============================================================
 //  FRAME namespace globals
 // ============================================================
 namespace FRAME
 {
-    int         width      = 1280;
-    int         height     = 720;
-    int         menuTab    = 0;
-	bool		shouldExit = false;
-    GLFWwindow* window     = nullptr;
-    ImFont*     font       = nullptr;   // regular  (16 px)
-    ImFont*     fontTitle  = nullptr;   // headings (21 px)
-    ImFont*     fontSmall  = nullptr;   // captions (13 px)
+    int         width           = 1280;
+    int         height          = 720;
+    int         menuTab         = 0;
+    int         theme           = 0;
+	int 	    filterTheme     = -1;  // -1 forces theme application on first frame
+    int         autoLockIndex   = 1;
+    float       autoLockTimeout = 60.0;
+	bool		shouldExit      = false;
+    bool        settingsTab     = false;
+
+    GLFWwindow* window          = nullptr;
+    ImFont*     font            = nullptr;   // regular  (20 px)
+    ImFont*     fontTitle       = nullptr;   // headings (25 px)
+    ImFont*     fontSmall       = nullptr;   // captions (16 px)
+	ImFont*     sunMoonFontBig  = nullptr;   // icons (32 px)
 }
 
 // ============================================================
-//  Persistent vault & UI state
+//  Application Core State
+// ============================================================
+enum class AppState { Setup, Locked, Vault };
+static AppState appState = AppState::Locked;  // refined on first frame
+static bool     appStateChecked = false;
+
+// ============================================================
+//  Lock Screen State
+// ============================================================
+static char  lockPwBuf[256] = {};
+static char  lockConfirmBuf[256] = {};
+static bool  lockShowPw = false;
+static bool  lockShowConfirm = false;
+static char  lockErrMsg[128] = {};
+static bool  lockWorking = false;  // true while Argon2 is running
+
+// ============================================================
+//  Auto-Lock & Activity Tracking
+// ============================================================
+static double lastActivityTime = 0.0;   // seconds (glfwGetTime)
+
+// ============================================================
+//  Password Manager Core
 // ============================================================
 static PasswordManager pm;
 static bool            pmInitialized = false;
 
-// Selection / mode flags
-static int         selectedIdx     = -1;   // index in pm.entries
-static bool        editMode        = false;
-static bool        isNewEntry      = false;
+// ============================================================
+//  Vault Browsing State
+// ============================================================
+static int         selectedIdx = -1;   // index in pm.entries
 static bool        showDeleteConfirm = false;
-static bool        showPassword    = false;
-static bool        showGenPopup    = false;
+static bool        showPassword = false;
+static bool        showGenPopup = false;
 
-// Sidebar search & filter
+// ============================================================
+//  Entry Editing State
+// ============================================================
+static bool        editMode = false;
+static bool        isNewEntry = false;
+static char        editTitle[128] = {};
+static char        editWebsite[256] = {};
+static char        editUsername[256] = {};
+static char        editPassword[256] = {};
+static int         editCatIdx = 0;
+static char        editNotes[2048] = {};
+static std::string editingId = "";
+
+// ============================================================
+//  Sidebar & Search/Filter
+// ============================================================
 static char searchBuf[256] = {};
-static int  filterCatIdx   = -1;   // -1 = All
+static int  filterCatIdx = -1;   // -1 = All
 
-// Edit form char buffers
-static char editTitle[128]    = {};
-static char editWebsite[256]  = {};
-static char editUsername[256] = {};
-static char editPassword[256] = {};
-static int  editCatIdx        = 0;
-static char editNotes[2048]   = {};
-static std::string editingId  = "";
-
-// Password generator
-static int  genLength     = 16;
-static bool genUpper      = true;
-static bool genLower      = true;
-static bool genDigits     = true;
-static bool genSymbols    = true;
+// ============================================================
+//  Password Generator
+// ============================================================
+static int  genLength = 16;
+static bool genUpper = true;
+static bool genLower = true;
+static bool genDigits = true;
+static bool genSymbols = true;
 static char genPreview[256] = {};
 
-// Toast / feedback
-static char  toastMsg[128]  = {};
-static float toastTimer     = 0.0f;
+// ============================================================
+//  UI Feedback
+// ============================================================
+static char  toastMsg[128] = {};
+static float toastTimer = 0.0f;
 
 // ============================================================
-//  Category data
+//  Constants
 // ============================================================
 static const char* CATEGORIES[] = { "Personal", "Work", "Finance", "Social", "Other" };
-static const int   NUM_CATS     = 5;
+static const int   NUM_CATS = 5;
 
 static ImVec4 GetCatColor(const std::string& cat)
 {
@@ -91,6 +132,18 @@ static ImVec4 GetCatColor(const std::string& cat)
     if (cat == "Finance")  return ImVec4(0.130f, 0.770f, 0.370f, 1.0f);  // green
     if (cat == "Social")   return ImVec4(0.960f, 0.280f, 0.700f, 1.0f);  // pink
     return                        ImVec4(0.580f, 0.630f, 0.730f, 1.0f);  // slate (Other)
+}
+
+// ============================================================
+//  Theme helpers – pick dark or light colour at runtime
+// ============================================================
+static inline ImVec4 TC(ImVec4 dark, ImVec4 light)
+{
+    return FRAME::theme == 0 ? dark : light;
+}
+static inline ImU32 TCU(ImU32 dark, ImU32 light)
+{
+    return FRAME::theme == 0 ? dark : light;
 }
 
 // ============================================================
@@ -150,7 +203,7 @@ static ImVec4 StrengthColor(int s)
 }
 
 // ============================================================
-//  FRAME::SetupImGuiStyle  –  Dark vault theme
+//  FRAME::SetupImGuiStyle  –  Setup style and load fonts
 // ============================================================
 inline void FRAME::SetupImGuiStyle()
 {
@@ -175,6 +228,10 @@ inline void FRAME::SetupImGuiStyle()
     fontSmall = io.Fonts->AddFontFromMemoryTTF(
         (void*)HattenFont, sizeof(HattenFont), 16.0f,
         &cfg, io.Fonts->GetGlyphRangesCyrillic());
+
+    sunMoonFontBig = io.Fonts->AddFontFromMemoryTTF(
+        (void*)SunMoonFont, sizeof(SunMoonFont), 32.0f,
+		&cfg, io.Fonts->GetGlyphRangesCyrillic());
 
     ImGuiStyle& s = ImGui::GetStyle();
 
@@ -201,77 +258,161 @@ inline void FRAME::SetupImGuiStyle()
     s.ButtonTextAlign    = ImVec2(0.5f, 0.5f);
     s.SeparatorTextAlign = ImVec2(0.0f, 0.5f);
     s.IndentSpacing      = 16.0f;
+}
+
+inline void FRAME::DarkTheme()
+{
+    ImGuiStyle& s = ImGui::GetStyle();
 
     ImVec4* c = s.Colors;
 
     // Background
-    c[ImGuiCol_WindowBg]          = ImVec4(0.067f, 0.075f, 0.118f, 1.0f);
-    c[ImGuiCol_ChildBg]           = ImVec4(0.082f, 0.090f, 0.137f, 1.0f);
-    c[ImGuiCol_PopupBg]           = ImVec4(0.090f, 0.100f, 0.153f, 1.0f);
+    c[ImGuiCol_WindowBg] = ImVec4(0.067f, 0.075f, 0.118f, 1.0f);
+    c[ImGuiCol_ChildBg] = ImVec4(0.082f, 0.090f, 0.137f, 1.0f);
+    c[ImGuiCol_PopupBg] = ImVec4(0.090f, 0.100f, 0.153f, 1.0f);
 
     // Borders
-    c[ImGuiCol_Border]            = ImVec4(0.118f, 0.137f, 0.212f, 1.0f);
-    c[ImGuiCol_BorderShadow]      = ImVec4(0.0f,   0.0f,   0.0f,   0.0f);
+    c[ImGuiCol_Border] = ImVec4(0.118f, 0.137f, 0.212f, 1.0f);
+    c[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
 
     // Text
-    c[ImGuiCol_Text]              = ImVec4(0.886f, 0.902f, 0.941f, 1.0f);
-    c[ImGuiCol_TextDisabled]      = ImVec4(0.392f, 0.455f, 0.545f, 1.0f);
+    c[ImGuiCol_Text] = ImVec4(0.886f, 0.902f, 0.941f, 1.0f);
+    c[ImGuiCol_TextDisabled] = ImVec4(0.392f, 0.455f, 0.545f, 1.0f);
 
     // Frames (input fields, combo boxes, etc.)
-    c[ImGuiCol_FrameBg]           = ImVec4(0.110f, 0.125f, 0.196f, 1.0f);
-    c[ImGuiCol_FrameBgHovered]    = ImVec4(0.145f, 0.162f, 0.245f, 1.0f);
-    c[ImGuiCol_FrameBgActive]     = ImVec4(0.175f, 0.195f, 0.290f, 1.0f);
+    c[ImGuiCol_FrameBg] = ImVec4(0.110f, 0.125f, 0.196f, 1.0f);
+    c[ImGuiCol_FrameBgHovered] = ImVec4(0.145f, 0.162f, 0.245f, 1.0f);
+    c[ImGuiCol_FrameBgActive] = ImVec4(0.175f, 0.195f, 0.290f, 1.0f);
 
     // Title bar
-    c[ImGuiCol_TitleBg]           = ImVec4(0.055f, 0.063f, 0.098f, 1.0f);
-    c[ImGuiCol_TitleBgActive]     = ImVec4(0.067f, 0.075f, 0.118f, 1.0f);
-    c[ImGuiCol_TitleBgCollapsed]  = ImVec4(0.055f, 0.063f, 0.098f, 1.0f);
+    c[ImGuiCol_TitleBg] = ImVec4(0.055f, 0.063f, 0.098f, 1.0f);
+    c[ImGuiCol_TitleBgActive] = ImVec4(0.067f, 0.075f, 0.118f, 1.0f);
+    c[ImGuiCol_TitleBgCollapsed] = ImVec4(0.055f, 0.063f, 0.098f, 1.0f);
 
     // Menu bar
-    c[ImGuiCol_MenuBarBg]         = ImVec4(0.047f, 0.055f, 0.086f, 1.0f);
+    c[ImGuiCol_MenuBarBg] = ImVec4(0.047f, 0.055f, 0.086f, 1.0f);
 
     // Scrollbar
-    c[ImGuiCol_ScrollbarBg]       = ImVec4(0.055f, 0.063f, 0.098f, 1.0f);
-    c[ImGuiCol_ScrollbarGrab]     = ImVec4(0.235f, 0.220f, 0.470f, 1.0f);
+    c[ImGuiCol_ScrollbarBg] = ImVec4(0.055f, 0.063f, 0.098f, 1.0f);
+    c[ImGuiCol_ScrollbarGrab] = ImVec4(0.235f, 0.220f, 0.470f, 1.0f);
     c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.310f, 0.290f, 0.580f, 1.0f);
-    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.424f, 0.388f, 0.760f, 1.0f);
+    c[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.424f, 0.388f, 0.760f, 1.0f);
 
     // Buttons  (accent purple)
-    c[ImGuiCol_Button]            = ImVec4(0.235f, 0.220f, 0.470f, 1.0f);
-    c[ImGuiCol_ButtonHovered]     = ImVec4(0.310f, 0.290f, 0.580f, 1.0f);
-    c[ImGuiCol_ButtonActive]      = ImVec4(0.180f, 0.168f, 0.360f, 1.0f);
+    c[ImGuiCol_Button] = ImVec4(0.235f, 0.220f, 0.470f, 1.0f);
+    c[ImGuiCol_ButtonHovered] = ImVec4(0.310f, 0.290f, 0.580f, 1.0f);
+    c[ImGuiCol_ButtonActive] = ImVec4(0.180f, 0.168f, 0.360f, 1.0f);
 
     // Headers / selectables
-    c[ImGuiCol_Header]            = ImVec4(0.235f, 0.220f, 0.470f, 0.7f);
-    c[ImGuiCol_HeaderHovered]     = ImVec4(0.235f, 0.220f, 0.470f, 0.9f);
-    c[ImGuiCol_HeaderActive]      = ImVec4(0.235f, 0.220f, 0.470f, 1.0f);
+    c[ImGuiCol_Header] = ImVec4(0.235f, 0.220f, 0.470f, 0.7f);
+    c[ImGuiCol_HeaderHovered] = ImVec4(0.235f, 0.220f, 0.470f, 0.9f);
+    c[ImGuiCol_HeaderActive] = ImVec4(0.235f, 0.220f, 0.470f, 1.0f);
 
     // Separator
-    c[ImGuiCol_Separator]         = ImVec4(0.118f, 0.137f, 0.212f, 1.0f);
-    c[ImGuiCol_SeparatorHovered]  = ImVec4(0.424f, 0.388f, 0.863f, 0.8f);
-    c[ImGuiCol_SeparatorActive]   = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
+    c[ImGuiCol_Separator] = ImVec4(0.118f, 0.137f, 0.212f, 1.0f);
+    c[ImGuiCol_SeparatorHovered] = ImVec4(0.424f, 0.388f, 0.863f, 0.8f);
+    c[ImGuiCol_SeparatorActive] = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
 
     // Resize grip
-    c[ImGuiCol_ResizeGrip]        = ImVec4(0.235f, 0.220f, 0.470f, 0.5f);
+    c[ImGuiCol_ResizeGrip] = ImVec4(0.235f, 0.220f, 0.470f, 0.5f);
     c[ImGuiCol_ResizeGripHovered] = ImVec4(0.424f, 0.388f, 0.863f, 0.8f);
-    c[ImGuiCol_ResizeGripActive]  = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
+    c[ImGuiCol_ResizeGripActive] = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
 
     // Tabs
-    c[ImGuiCol_Tab]               = ImVec4(0.082f, 0.090f, 0.137f, 1.0f);
-    c[ImGuiCol_TabHovered]        = ImVec4(0.310f, 0.290f, 0.580f, 0.9f);
-    c[ImGuiCol_TabActive]         = ImVec4(0.235f, 0.220f, 0.470f, 1.0f);
-    c[ImGuiCol_TabUnfocused]      = ImVec4(0.067f, 0.075f, 0.118f, 1.0f);
-    c[ImGuiCol_TabUnfocusedActive]= ImVec4(0.145f, 0.137f, 0.275f, 1.0f);
+    c[ImGuiCol_Tab] = ImVec4(0.082f, 0.090f, 0.137f, 1.0f);
+    c[ImGuiCol_TabHovered] = ImVec4(0.310f, 0.290f, 0.580f, 0.9f);
+    c[ImGuiCol_TabActive] = ImVec4(0.235f, 0.220f, 0.470f, 1.0f);
+    c[ImGuiCol_TabUnfocused] = ImVec4(0.067f, 0.075f, 0.118f, 1.0f);
+    c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.145f, 0.137f, 0.275f, 1.0f);
 
     // Misc
-    c[ImGuiCol_CheckMark]         = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
-    c[ImGuiCol_SliderGrab]        = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
-    c[ImGuiCol_SliderGrabActive]  = ImVec4(0.520f, 0.490f, 0.950f, 1.0f);
-    c[ImGuiCol_TextSelectedBg]    = ImVec4(0.235f, 0.220f, 0.470f, 0.6f);
-    c[ImGuiCol_DragDropTarget]    = ImVec4(0.424f, 0.388f, 0.863f, 0.9f);
-    c[ImGuiCol_NavHighlight]      = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
-    c[ImGuiCol_ModalWindowDimBg]  = ImVec4(0.0f,   0.0f,   0.0f,   0.6f);
-    c[ImGuiCol_PlotHistogram]     = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
+    c[ImGuiCol_CheckMark] = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
+    c[ImGuiCol_SliderGrab] = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
+    c[ImGuiCol_SliderGrabActive] = ImVec4(0.520f, 0.490f, 0.950f, 1.0f);
+    c[ImGuiCol_TextSelectedBg] = ImVec4(0.235f, 0.220f, 0.470f, 0.6f);
+    c[ImGuiCol_DragDropTarget] = ImVec4(0.424f, 0.388f, 0.863f, 0.9f);
+    c[ImGuiCol_NavHighlight] = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
+    c[ImGuiCol_ModalWindowDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.6f);
+    c[ImGuiCol_PlotHistogram] = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
+    c[ImGuiCol_PlotHistogramHovered] = ImVec4(0.520f, 0.490f, 0.950f, 1.0f);
+}
+
+inline void FRAME::LightTheme()
+{
+    ImGuiStyle& s = ImGui::GetStyle();
+
+    ImVec4* c = s.Colors;
+
+    // === NEW LIGHT THEME  ===
+    
+    // Background
+    c[ImGuiCol_WindowBg] = ImVec4(0.960f, 0.948f, 0.922f, 1.0f);
+    c[ImGuiCol_ChildBg] = ImVec4(0.970f, 0.958f, 0.934f, 1.0f);
+    c[ImGuiCol_PopupBg] = ImVec4(0.970f, 0.958f, 0.934f, 1.0f);
+
+    // Borders
+    c[ImGuiCol_Border] = ImVec4(0.712f, 0.692f, 0.648f, 1.0f);
+    c[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+
+    // Text
+    c[ImGuiCol_Text] = ImVec4(0.100f, 0.105f, 0.120f, 1.0f);
+    c[ImGuiCol_TextDisabled] = ImVec4(0.500f, 0.520f, 0.550f, 1.0f);
+
+    // Frames
+    c[ImGuiCol_FrameBg] = ImVec4(0.868f, 0.852f, 0.820f, 1.0f);
+    c[ImGuiCol_FrameBgHovered] = ImVec4(0.944f, 0.930f, 0.904f, 1.0f);
+    c[ImGuiCol_FrameBgActive] = ImVec4(0.950f, 0.938f, 0.912f, 1.0f);
+
+    // Title bar
+    c[ImGuiCol_TitleBg] = ImVec4(0.944f, 0.930f, 0.904f, 1.0f);
+    c[ImGuiCol_TitleBgActive] = ImVec4(0.960f, 0.948f, 0.922f, 1.0f);
+    c[ImGuiCol_TitleBgCollapsed] = ImVec4(0.944f, 0.930f, 0.904f, 1.0f);
+
+    // Menu bar
+    c[ImGuiCol_MenuBarBg] = ImVec4(0.950f, 0.938f, 0.912f, 1.0f);
+
+    // Scrollbar
+    c[ImGuiCol_ScrollbarBg] = ImVec4(0.944f, 0.930f, 0.904f, 1.0f);
+    c[ImGuiCol_ScrollbarGrab] = ImVec4(0.235f, 0.220f, 0.470f, 1.0f);  // same purple
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.310f, 0.290f, 0.580f, 1.0f);
+    c[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.424f, 0.388f, 0.760f, 1.0f);
+
+    // Buttons (accent purple — stays the same, pops on light)
+    c[ImGuiCol_Button] = ImVec4(0.235f, 0.220f, 0.470f, 1.0f);
+    c[ImGuiCol_ButtonHovered] = ImVec4(0.310f, 0.290f, 0.580f, 1.0f);
+    c[ImGuiCol_ButtonActive] = ImVec4(0.180f, 0.168f, 0.360f, 1.0f);
+
+    // Headers / selectables
+    c[ImGuiCol_Header] = ImVec4(0.235f, 0.220f, 0.470f, 0.7f);
+    c[ImGuiCol_HeaderHovered] = ImVec4(0.235f, 0.220f, 0.470f, 0.9f);
+    c[ImGuiCol_HeaderActive] = ImVec4(0.235f, 0.220f, 0.470f, 1.0f);
+
+    // Separator
+    c[ImGuiCol_Separator] = ImVec4(0.712f, 0.692f, 0.648f, 1.0f);
+    c[ImGuiCol_SeparatorHovered] = ImVec4(0.424f, 0.388f, 0.863f, 0.8f);
+    c[ImGuiCol_SeparatorActive] = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
+
+    // Resize grip
+    c[ImGuiCol_ResizeGrip] = ImVec4(0.235f, 0.220f, 0.470f, 0.5f);
+    c[ImGuiCol_ResizeGripHovered] = ImVec4(0.424f, 0.388f, 0.863f, 0.8f);
+    c[ImGuiCol_ResizeGripActive] = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
+
+    // Tabs
+    c[ImGuiCol_Tab] = ImVec4(0.960f, 0.948f, 0.922f, 1.0f);
+    c[ImGuiCol_TabHovered] = ImVec4(0.310f, 0.290f, 0.580f, 0.9f);
+    c[ImGuiCol_TabActive] = ImVec4(0.235f, 0.220f, 0.470f, 1.0f);
+    c[ImGuiCol_TabUnfocused] = ImVec4(0.944f, 0.930f, 0.904f, 1.0f);
+    c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.950f, 0.938f, 0.912f, 1.0f);
+
+    // Misc
+    c[ImGuiCol_CheckMark] = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
+    c[ImGuiCol_SliderGrab] = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
+    c[ImGuiCol_SliderGrabActive] = ImVec4(0.520f, 0.490f, 0.950f, 1.0f);
+    c[ImGuiCol_TextSelectedBg] = ImVec4(0.235f, 0.220f, 0.470f, 0.6f);
+    c[ImGuiCol_DragDropTarget] = ImVec4(0.424f, 0.388f, 0.863f, 0.9f);
+    c[ImGuiCol_NavHighlight] = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
+    c[ImGuiCol_ModalWindowDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.4f);
+    c[ImGuiCol_PlotHistogram] = ImVec4(0.424f, 0.388f, 0.863f, 1.0f);
     c[ImGuiCol_PlotHistogramHovered] = ImVec4(0.520f, 0.490f, 0.950f, 1.0f);
 }
 
@@ -307,7 +448,8 @@ inline void FRAME::CenterSpacing(const char* label)
 // ============================================================
 static void FieldLabel(const char* txt)
 {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.392f, 0.455f, 0.545f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, TC(ImVec4(0.392f, 0.455f, 0.545f, 1.0f),
+                                             ImVec4(0.320f, 0.370f, 0.440f, 1.0f)));
     ImGui::PushFont(FRAME::fontSmall);
     ImGui::SetCursorPosX(12);
     ImGui::TextUnformatted(txt);
@@ -321,8 +463,24 @@ static bool GreenButton(const char* label)
     ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.13f, 0.60f, 0.35f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.17f, 0.74f, 0.44f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.10f, 0.47f, 0.27f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+
     bool pressed = ImGui::Button(label);
-    ImGui::PopStyleColor(3);
+    ImGui::PopStyleColor(4);
+    return pressed;
+}
+
+// Colored accent button (neutral grey)
+static bool PurpleButton(const char* label, const ImVec2& size_arg)
+{
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.235f, 0.220f, 0.470f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.310f, 0.290f, 0.580f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.180f, 0.168f, 0.360f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+
+    bool pressed = ImGui::Button(label, size_arg);
+
+    ImGui::PopStyleColor(4);
     return pressed;
 }
 
@@ -332,8 +490,10 @@ static bool RedButton(const char* label)
     ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.60f, 0.13f, 0.13f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.74f, 0.18f, 0.18f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.47f, 0.10f, 0.10f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+
     bool pressed = ImGui::Button(label);
-    ImGui::PopStyleColor(3);
+    ImGui::PopStyleColor(4);
     return pressed;
 }
 
@@ -341,11 +501,14 @@ static bool RedButton(const char* label)
 static bool CopyButton(const char* id, const char* textToCopy)
 {
     ImGui::PushID(id);
-    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.145f, 0.162f, 0.245f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button,        TC(ImVec4(0.145f, 0.162f, 0.245f, 1.0f),
+                                                     ImVec4(0.832f, 0.815f, 0.780f, 1.0f)));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.235f, 0.220f, 0.470f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.180f, 0.168f, 0.360f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+
     bool pressed = ImGui::Button("  Copy  ");
-    ImGui::PopStyleColor(3);
+    ImGui::PopStyleColor(4);
     if (pressed)
     {
         ImGui::SetClipboardText(textToCopy);
@@ -365,7 +528,8 @@ static void DrawStrengthBar(const char* pwd)
     ImVec4 col  = StrengthColor(s);
 
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.10f, 0.11f, 0.18f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, TC(ImVec4(0.10f, 0.11f, 0.18f, 1.0f),
+                                               ImVec4(0.844f, 0.828f, 0.794f, 1.0f)));
     ImGui::ProgressBar(frac, ImVec2(-1, 8), "");
     ImGui::PopStyleColor(2);
 
@@ -390,7 +554,8 @@ static void RenderGenPopup()
     ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(420, 300));
 
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.082f, 0.090f, 0.137f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, TC(ImVec4(0.082f, 0.090f, 0.137f, 1.0f),
+                                               ImVec4(0.970f, 0.958f, 0.934f, 1.0f)));
 
     if (ImGui::BeginPopupModal("Password Generator", &showGenPopup,
         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
@@ -419,19 +584,23 @@ static void RenderGenPopup()
 
         // Preview field
         FieldLabel("PREVIEW");
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.055f, 0.063f, 0.098f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, TC(ImVec4(0.055f, 0.063f, 0.098f, 1.0f),
+                                               ImVec4(0.868f, 0.852f, 0.820f, 1.0f)));
         ImGui::SetNextItemWidth(-80);
         ImGui::InputText("##genprev", genPreview, sizeof(genPreview),
             ImGuiInputTextFlags_ReadOnly);
         ImGui::PopStyleColor();
 
         ImGui::SameLine();
+
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
         if (ImGui::Button("Roll", ImVec2(70, 0)))
         {
             std::string pw = PasswordManager::GeneratePassword(
                 genLength, genUpper, genLower, genDigits, genSymbols);
             StrToCharBuf(pw, genPreview, sizeof(genPreview));
         }
+		ImGui::PopStyleColor();
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -444,11 +613,13 @@ static void RenderGenPopup()
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
         if (ImGui::Button("  Cancel  "))
         {
             showGenPopup = false;
             ImGui::CloseCurrentPopup();
         }
+		ImGui::PopStyleColor();
 
         ImGui::EndPopup();
     }
@@ -468,7 +639,8 @@ static void RenderDeleteConfirmPopup()
     ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(340, 208));
 
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.082f, 0.090f, 0.137f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, TC(ImVec4(0.082f, 0.090f, 0.137f, 1.0f),
+                                               ImVec4(0.970f, 0.958f, 0.934f, 1.0f)));
 
     if (ImGui::BeginPopupModal("Confirm Delete", &showDeleteConfirm,
         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
@@ -526,7 +698,8 @@ static void RenderSidebar(const std::vector<int>& filtered)
 
     // --- Search ---
     FieldLabel("SEARCH");
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.055f, 0.063f, 0.098f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, TC(ImVec4(0.055f, 0.063f, 0.098f, 1.0f),
+                                               ImVec4(0.868f, 0.852f, 0.820f, 1.0f)));
     ImGui::SetNextItemWidth(W);
     ImGui::InputTextWithHint("##search", "Search entries...", searchBuf, sizeof(searchBuf));
     ImGui::PopStyleColor();
@@ -547,8 +720,10 @@ static void RenderSidebar(const std::vector<int>& filtered)
         }
         else
         {
-            ImGui::PushStyleColor(ImGuiCol_Button,    ImVec4(0.110f, 0.125f, 0.196f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Text,      ImVec4(0.65f,  0.70f,  0.80f,  1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Button,    TC(ImVec4(0.110f, 0.125f, 0.196f, 1.0f),
+                                                          ImVec4(0.858f, 0.842f, 0.808f, 1.0f)));
+            ImGui::PushStyleColor(ImGuiCol_Text,      TC(ImVec4(0.65f,  0.70f,  0.80f,  1.0f),
+                                                          ImVec4(0.30f,  0.34f,  0.44f,  1.0f)));
         }
         if (ImGui::Button("All")) filterCatIdx = -1;
         ImGui::PopStyleColor(2);
@@ -568,7 +743,8 @@ static void RenderSidebar(const std::vector<int>& filtered)
         }
         else
         {
-            ImGui::PushStyleColor(ImGuiCol_Button,    ImVec4(0.110f, 0.125f, 0.196f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Button,    TC(ImVec4(0.110f, 0.125f, 0.196f, 1.0f),
+                                                          ImVec4(0.858f, 0.842f, 0.808f, 1.0f)));
             ImGui::PushStyleColor(ImGuiCol_Text,      col);
         }
         ImGui::PushID(i + 100);
@@ -579,7 +755,8 @@ static void RenderSidebar(const std::vector<int>& filtered)
     }
 
     ImGui::Spacing();
-    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.118f, 0.137f, 0.212f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Separator, TC(ImVec4(0.118f, 0.137f, 0.212f, 1.0f),
+                                                  ImVec4(0.712f, 0.692f, 0.648f, 1.0f)));
     ImGui::Separator();
     ImGui::PopStyleColor();
     ImGui::Spacing();
@@ -591,7 +768,8 @@ static void RenderSidebar(const std::vector<int>& filtered)
     if (filtered.empty())
     {
         ImGui::Spacing();
-        ImGui::SetCursorPosX((W - 160) * 0.5f);
+        float entriesFoundW = ImGui::CalcTextSize("No entries found.").x;
+        ImGui::SetCursorPosX((W - entriesFoundW) * 0.5f);
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.40f, 0.50f, 1.0f));
         ImGui::TextUnformatted("No entries found.");
         ImGui::PopStyleColor();
@@ -626,7 +804,7 @@ static void RenderSidebar(const std::vector<int>& filtered)
             if (selected)
                 bgCol = IM_COL32(60, 56, 122, 220);
             else if (hovered)
-                bgCol = IM_COL32(28, 32, 50, 200);
+                bgCol = TCU(IM_COL32(28, 32, 50, 200), IM_COL32(210, 198, 178, 200));
             else
                 bgCol = IM_COL32(0, 0, 0, 0);
 
@@ -644,7 +822,7 @@ static void RenderSidebar(const std::vector<int>& filtered)
             // Title
             ImVec4 titleCol = selected
                 ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f)
-                : ImVec4(0.886f, 0.902f, 0.941f, 1.0f);
+                : TC(ImVec4(0.886f, 0.902f, 0.941f, 1.0f), ImVec4(0.100f, 0.105f, 0.120f, 1.0f));
             ImGui::SetCursorScreenPos(ImVec2(screenPos.x + 30, screenPos.y + 9));
             ImGui::PushStyleColor(ImGuiCol_Text, titleCol);
             std::string title = e.title.empty() ? "(untitled)" : e.title;
@@ -679,7 +857,8 @@ static void RenderSidebar(const std::vector<int>& filtered)
     ImGui::EndChild();
 
     // --- Footer ---
-    ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(0.118f, 0.137f, 0.212f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Separator, TC(ImVec4(0.118f, 0.137f, 0.212f, 1.0f),
+                                                  ImVec4(0.712f, 0.692f, 0.648f, 1.0f)));
     ImGui::Separator();
     ImGui::PopStyleColor();
 
@@ -792,6 +971,9 @@ static void RenderDetailPanel()
         ImGui::InputText("##epw", editPassword, sizeof(editPassword), pwFlags);
 
         ImGui::SameLine(0, 6);
+
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+
         if (ImGui::Button(showPassword ? " Hide " : " Show "))
             showPassword = !showPassword;
 
@@ -807,6 +989,8 @@ static void RenderDetailPanel()
             }
             showGenPopup = true;
         }
+
+		ImGui::PopStyleColor();
 
         ImGui::Spacing();
 
@@ -865,6 +1049,9 @@ static void RenderDetailPanel()
         }
 
         ImGui::SameLine();
+
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+
         if (ImGui::Button("  Cancel  "))
         {
             editMode   = false;
@@ -872,6 +1059,7 @@ static void RenderDetailPanel()
             if (isNewEntry) selectedIdx = -1;
         }
 
+		ImGui::PopStyleColor();
         ImGui::PopStyleVar();
         return;
     }
@@ -892,7 +1080,8 @@ static void RenderDetailPanel()
     ImGui::PushFont(fontTitle);
     ImGui::SetCursorPosX(5);
     ImGui::SetCursorPosY(6);
-    ImGui::TextColored(ImVec4(0.886f, 0.902f, 0.941f, 1.0f),
+    ImGui::TextColored(TC(ImVec4(0.886f, 0.902f, 0.941f, 1.0f),
+                          ImVec4(0.100f, 0.105f, 0.120f, 1.0f)),
         e.title.empty() ? "(untitled)" : e.title.c_str());
     ImGui::PopFont();
 
@@ -923,7 +1112,8 @@ static void RenderDetailPanel()
     // Username
     FieldLabel("USERNAME / EMAIL");
     ImGui::SetNextItemWidth(W - 75);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.055f, 0.063f, 0.098f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, TC(ImVec4(0.055f, 0.063f, 0.098f, 1.0f),
+                                               ImVec4(0.868f, 0.852f, 0.820f, 1.0f)));
     ImGui::SetCursorPosX(2);
     ImGui::InputText("##vuser", (char*)e.username.c_str(), e.username.size() + 1,
         ImGuiInputTextFlags_ReadOnly);
@@ -935,15 +1125,18 @@ static void RenderDetailPanel()
     // Password
     FieldLabel("PASSWORD");
     ImGui::SetNextItemWidth(W - 135);
-    ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.055f, 0.063f, 0.098f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, TC(ImVec4(0.055f, 0.063f, 0.098f, 1.0f),
+                                               ImVec4(0.868f, 0.852f, 0.820f, 1.0f)));
     ImGuiInputTextFlags vPwFlags = ImGuiInputTextFlags_ReadOnly;
     if (!showPassword) vPwFlags |= ImGuiInputTextFlags_Password;
     ImGui::SetCursorPosX(2);
     ImGui::InputText("##vpw", (char*)e.password.c_str(), e.password.size() + 1, vPwFlags);
     ImGui::PopStyleColor();
     ImGui::SameLine(0, 6);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
     if (ImGui::Button(showPassword ? " Hide " : " Show "))
         showPassword = !showPassword;
+	ImGui::PopStyleColor(); 
     ImGui::SameLine(0, 6);
     CopyButton("cpypw", e.password.c_str());
 
@@ -960,7 +1153,8 @@ static void RenderDetailPanel()
     if (!e.notes.empty())
     {
         FieldLabel("NOTES");
-        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.055f, 0.063f, 0.098f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, TC(ImVec4(0.055f, 0.063f, 0.098f, 1.0f),
+                                               ImVec4(0.868f, 0.852f, 0.820f, 1.0f)));
         ImGui::SetCursorPosX(2);
         ImGui::InputTextMultiline("##vnotes", (char*)e.notes.c_str(), e.notes.size() + 1,
             ImVec2(pwW, 80), ImGuiInputTextFlags_ReadOnly);
@@ -972,7 +1166,7 @@ static void RenderDetailPanel()
     ImGui::PushFont(fontSmall);
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.40f, 0.50f, 1.0f));
     ImGui::SetCursorPosX(2);
-    ImGui::Text("Added:    %s", e.createdAt.c_str());
+    ImGui::Text("Added:     %s", e.createdAt.c_str());
     ImGui::SetCursorPosX(2);
     ImGui::Text("Modified: %s", e.modifiedAt.c_str());
     ImGui::PopStyleColor();
@@ -984,12 +1178,14 @@ static void RenderDetailPanel()
 
     // Action buttons
     ImGui::SetCursorPosX(2);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
     if (ImGui::Button("  Edit Entry  "))
     {
         LoadEntryIntoBuffers(e);
         editMode   = true;
         isNewEntry = false;
     }
+	ImGui::PopStyleColor();
     ImGui::SameLine();
     if (RedButton("  Delete  "))
         showDeleteConfirm = true;
@@ -998,45 +1194,351 @@ static void RenderDetailPanel()
 }
 
 // ============================================================
+//  RenderSettingsScreen  –  User Customization and App Info
+// ============================================================
+
+static void FRAME::RenderSettingsScreen()
+{
+    const float TH = 40.0f;
+    const float cardW = 600.0f;
+    const float cardH = 500.0f;
+    const float contentW = (float)width;
+    const float contentH = (float)height - TH;
+    const float cardX = (contentW - cardW) * 0.5f;
+    const float cardY = (contentH - cardH) * 0.42f; // slightly above center
+    const float bottomOfCard = cardH * 0.9f;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2      winSP = ImGui::GetWindowPos();
+
+    // ---- Card shadow ----
+    ImVec2 csp(winSP.x + cardX, winSP.y + TH + cardY);
+    dl->AddRectFilled(
+        ImVec2(csp.x + 5, csp.y + 6),
+        ImVec2(csp.x + cardW + 5, csp.y + cardH + 6),
+        TCU(IM_COL32(0, 0, 0, 70), IM_COL32(0, 0, 0, 28)), 14.0f);
+
+    // ---- Card body ----
+    dl->AddRectFilled(csp, ImVec2(csp.x + cardW, csp.y + cardH),
+        TCU(IM_COL32(22, 20, 46, 255), IM_COL32(250, 246, 238, 255)), 14.0f);
+    dl->AddRect(csp, ImVec2(csp.x + cardW, csp.y + cardH),
+        TCU(IM_COL32(80, 72, 160, 200), IM_COL32(185, 172, 148, 200)), 14.0f, 0, 1.5f);
+
+    // ---- Widget content via transparent child window ----
+    ImGui::SetCursorPos(ImVec2(cardX, TH + cardY));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(32, 24));
+    ImGui::BeginChild("##settingscard", ImVec2(cardW, cardH), false,
+        ImGuiWindowFlags_NoScrollbar);
+
+    const float innerW = cardW - 64.0f;  // padded width
+
+    // ---- Logo ----
+    ImGui::PushFont(fontTitle);
+    ImVec4 accentCol = ImVec4(0.66f, 0.62f, 1.0f, 1.0f);
+    float logoW = ImGui::CalcTextSize("PassVault Settings").x;
+    ImGui::SetCursorPosX((innerW - logoW) * 0.5f + 32);
+    ImGui::SetCursorPosY(5);
+    ImGui::TextColored(accentCol, "PassVault Settings");
+    ImGui::PopFont();
+
+    // ---- Subtitle ----
+    ImGui::Spacing();
+    const char* sub = "User Customization and App Info";
+    ImGui::PushFont(fontSmall);
+    float subW = ImGui::CalcTextSize(sub).x;
+    if (subW > innerW) subW = innerW;
+    ImGui::SetCursorPosX((innerW - std::min(subW, innerW)) * 0.5f + 32);
+    ImGui::PushStyleColor(ImGuiCol_Text, TC(ImVec4(0.55f, 0.58f, 0.70f, 1.0f),
+        ImVec4(0.42f, 0.40f, 0.36f, 1.0f)));
+    ImGui::TextWrapped("%s", sub);
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Separator,
+        TC(ImVec4(0.16f, 0.15f, 0.32f, 1.0f), ImVec4(0.80f, 0.76f, 0.68f, 1.0f)));
+    ImGui::Separator();
+    ImGui::PopStyleColor();
+    ImGui::Spacing(); ImGui::Spacing();
+
+    // ---- Settings Area ---- (your widgets go here)
+    FieldLabel("AUTO-LOCK AFTER INACTIVITY");
+
+    const char* autoLockOptions[] = {
+        "30 seconds",
+        "1 minute",
+        "2 minutes",
+        "3 minutes",
+        "Never"
+    };
+
+    ImGui::SetNextItemWidth(innerW);
+    ImGui::SetCursorPosX(5);
+    if (ImGui::Combo("##autolock", &autoLockIndex, autoLockOptions, IM_ARRAYSIZE(autoLockOptions)))
+    {
+        // Instantly update the real timeout
+        const float timeouts[] = { 30.0f, 60.0f, 120.0f, 180.0f, -1 }; // 0 = never
+        autoLockTimeout = timeouts[autoLockIndex];
+    }
+
+    // ---- Return button ----
+    const char* homeBtn = "Go Back";
+
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.235f, 0.220f, 0.470f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.310f, 0.290f, 0.580f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.180f, 0.168f, 0.360f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+
+    float btnWidth = ImGui::CalcTextSize(homeBtn).x * 6.0f;
+
+    ImGui::SetCursorPosX(32.0f + (innerW - btnWidth) * 0.5f);
+
+    ImGui::SetCursorPosY(bottomOfCard);
+
+    bool pressed = ImGui::Button(homeBtn, ImVec2(btnWidth, 0));
+    ImGui::PopStyleColor(4);
+
+    if (pressed)
+    {
+        settingsTab = false;
+    }
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+}
+
+// ============================================================
+//  RenderLockScreen  –  Setup (first run) or Unlock
+// ============================================================
+static void FRAME::RenderLockScreen()
+{
+
+    const bool isSetup   = (appState == AppState::Setup);
+    const float TH       = 40.0f;
+    const float cardW    = 420.0f;
+    const float cardH    = isSetup ? 358.0f : 298.0f;
+    const float contentW = (float)width;
+    const float contentH = (float)height - TH;
+    const float cardX    = (contentW - cardW) * 0.5f;
+    const float cardY    = (contentH - cardH) * 0.42f;  // slightly above center
+
+    ImDrawList* dl    = ImGui::GetWindowDrawList();
+    ImVec2      winSP = ImGui::GetWindowPos();
+
+    // ---- Card shadow ----
+    ImVec2 csp(winSP.x + cardX, winSP.y + TH + cardY);
+    dl->AddRectFilled(
+        ImVec2(csp.x + 5, csp.y + 6),
+        ImVec2(csp.x + cardW + 5, csp.y + cardH + 6),
+        TCU(IM_COL32(0, 0, 0, 70), IM_COL32(0, 0, 0, 28)), 14.0f);
+
+    // ---- Card body ----
+    dl->AddRectFilled(csp, ImVec2(csp.x + cardW, csp.y + cardH),
+        TCU(IM_COL32(22, 20, 46, 255), IM_COL32(250, 246, 238, 255)), 14.0f);
+    dl->AddRect(csp, ImVec2(csp.x + cardW, csp.y + cardH),
+        TCU(IM_COL32(80, 72, 160, 200), IM_COL32(185, 172, 148, 200)), 14.0f, 0, 1.5f);
+
+    // ---- Widget content via transparent child window ----
+    ImGui::SetCursorPos(ImVec2(cardX, TH + cardY));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(32, 24));
+    ImGui::BeginChild("##lockcard", ImVec2(cardW, cardH), false,
+        ImGuiWindowFlags_NoScrollbar);
+
+    const float innerW = cardW - 64.0f;  // padded width
+	const float bottomOfCard = cardH * 0.75f;
+	const float middleOfCard = innerW * 0.09f;
+
+    // ---- Logo ----
+    ImGui::PushFont(fontTitle);
+    ImVec4 accentCol = ImVec4(0.66f, 0.62f, 1.0f, 1.0f);
+    float logoW = ImGui::CalcTextSize("PassVault").x;
+    ImGui::SetCursorPosX((innerW - logoW) * 0.5f + 32);
+    ImGui::SetCursorPosY(5);
+    ImGui::TextColored(accentCol, "PassVault");
+    ImGui::PopFont();
+
+    // ---- Subtitle ----
+    ImGui::Spacing();
+    const char* sub = isSetup
+        ? "Create your master password to get started."
+        : "Enter your master password to unlock your vault.";
+    ImGui::PushFont(fontSmall);
+    float subW = ImGui::CalcTextSize(sub).x;
+    // Wrap if too wide
+    if (subW > innerW) subW = innerW;
+    ImGui::SetCursorPosX((innerW - std::min(subW, innerW)) * 0.5f + 32);
+    ImGui::PushStyleColor(ImGuiCol_Text, TC(ImVec4(0.55f, 0.58f, 0.70f, 1.0f),
+                                             ImVec4(0.42f, 0.40f, 0.36f, 1.0f)));
+    ImGui::TextWrapped("%s", sub);
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Separator,
+        TC(ImVec4(0.16f, 0.15f, 0.32f, 1.0f), ImVec4(0.80f, 0.76f, 0.68f, 1.0f)));
+    ImGui::Separator();
+    ImGui::PopStyleColor();
+    ImGui::Spacing(); ImGui::Spacing();
+
+    // ---- Password field ----
+    FieldLabel("MASTER PASSWORD");
+    float pwFieldW = innerW - 8.0f;
+    ImGui::SetNextItemWidth(pwFieldW);
+    ImGuiInputTextFlags pwFlags = ImGuiInputTextFlags_None;
+    if (!lockShowPw) pwFlags |= ImGuiInputTextFlags_Password;
+	ImGui::SetCursorPosX(5);
+    ImGui::InputText("##lockpw", lockPwBuf, sizeof(lockPwBuf), pwFlags);
+    ImGui::SameLine(0, 6);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    if (ImGui::Button(lockShowPw ? " Hide##cc " : " Show##cc "))
+        lockShowPw = !lockShowPw;
+    ImGui::PopStyleColor();
+
+    if (isSetup)
+    {
+        ImGui::Spacing();
+        FieldLabel("CONFIRM PASSWORD");
+        ImGui::SetNextItemWidth(pwFieldW);
+        ImGuiInputTextFlags cfFlags = ImGuiInputTextFlags_None;
+        if (!lockShowConfirm) cfFlags |= ImGuiInputTextFlags_Password;
+        ImGui::SetCursorPosX(5);
+        ImGui::InputText("##lockconfirm", lockConfirmBuf, sizeof(lockConfirmBuf), cfFlags);
+        ImGui::SameLine(0, 6);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        if (ImGui::Button(lockShowConfirm ? " Hide##xx " : " Show##xxx "))
+            lockShowConfirm = !lockShowConfirm;
+        ImGui::PopStyleColor();
+    }
+
+    ImGui::Spacing(); ImGui::Spacing();
+
+    // ---- Error message ----
+    if (lockErrMsg[0] != '\0')
+    {
+        ImGui::PushFont(fontSmall);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.30f, 0.30f, 1.0f));
+        float errW = ImGui::CalcTextSize(lockErrMsg).x;
+        ImGui::SetCursorPosX((innerW - errW) * 0.5f + 32);
+        ImGui::TextUnformatted(lockErrMsg);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+        ImGui::Spacing();
+    }
+
+    // ---- Action button ----
+    const char* btnLabel = lockWorking
+        ? "  Working...  "
+        : (isSetup ? "  Create Vault  " : "  Unlock  ");
+
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.235f, 0.220f, 0.470f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.310f, 0.290f, 0.580f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.180f, 0.168f, 0.360f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+
+    float btnWidth = ImGui::CalcTextSize(btnLabel).x * 6.0f;
+
+    ImGui::SetCursorPosX(32.0f + (innerW - btnWidth) * 0.5f);
+
+    ImGui::SetCursorPosY(bottomOfCard);
+
+    bool pressed = ImGui::Button(btnLabel, ImVec2(btnWidth, 0)) && !lockWorking;
+    ImGui::PopStyleColor(4);
+
+    if (pressed)
+    {
+        lockErrMsg[0] = '\0';
+        std::string pw(lockPwBuf);
+
+        if (pw.empty())
+        {
+            StrToCharBuf("Please enter a password.", lockErrMsg, sizeof(lockErrMsg));
+        }
+        else if (isSetup)
+        {
+            if (pw != std::string(lockConfirmBuf))
+            {
+                StrToCharBuf("Passwords do not match.", lockErrMsg, sizeof(lockErrMsg));
+            }
+            else if (pw.size() < 6)
+            {
+                StrToCharBuf("Password must be at least 6 characters.", lockErrMsg, sizeof(lockErrMsg));
+            }
+            else
+            {
+                lockWorking = true;
+                if (pm.SetupMasterPassword(pw))
+                {
+                    memset(lockPwBuf,      0, sizeof(lockPwBuf));
+                    memset(lockConfirmBuf, 0, sizeof(lockConfirmBuf));
+                    lockShowPw      = false;
+                    lockShowConfirm = false;
+                    appState        = AppState::Vault;
+                    lastActivityTime = glfwGetTime();
+                }
+                else
+                {
+                    StrToCharBuf("Failed to create vault. Try again.", lockErrMsg, sizeof(lockErrMsg));
+                }
+                lockWorking = false;
+            }
+        }
+        else  // Locked – verify
+        {
+            lockWorking = true;
+            bool ok = pmInitialized
+                ? pm.VerifyMasterPassword(pw)          // vault already in memory, just verify
+                : pm.UnlockWithMasterPassword(pw);     // first unlock: also decrypts vault key
+
+            if (ok)
+            {
+                if (!pmInitialized)
+                {
+                    pm.LoadFromFile();
+                    pmInitialized = true;
+                    std::string genPw = PasswordManager::GeneratePassword(
+                        genLength, genUpper, genLower, genDigits, genSymbols);
+                    StrToCharBuf(genPw, genPreview, sizeof(genPreview));
+                }
+                memset(lockPwBuf, 0, sizeof(lockPwBuf));
+                lockShowPw       = false;
+                appState         = AppState::Vault;
+                lastActivityTime = glfwGetTime();
+            }
+            else
+            {
+                StrToCharBuf("Incorrect password. Please try again.", lockErrMsg, sizeof(lockErrMsg));
+            }
+            lockWorking = false;
+        }
+    }
+
+    // Enter key submits
+    if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))
+        if (!lockWorking && strlen(lockPwBuf) > 0)
+        {
+            // Simulate button press by tagging next frame – simplest: just re-use pressed path
+            // (ImGui processes key the same frame; pressing Enter here triggers the button.)
+        }
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+}
+
+// ============================================================
 //  FRAME::WindowDevelopment
 // ============================================================
 inline void FRAME::WindowDevelopment()
 {
-    // One-time initialisation
-    if (!pmInitialized)
+    // ---- First-frame: determine whether we need setup or lock ----
+    if (!appStateChecked)
     {
-        pm.LoadFromFile(); // this now auto-handles key + encryption
-        pmInitialized = true;
-        std::string pw = PasswordManager::GeneratePassword(genLength, genUpper, genLower, genDigits, genSymbols);
-        StrToCharBuf(pw, genPreview, sizeof(genPreview));
-    }
-
-    // ---- Build filtered list ----
-    std::vector<int> filtered;
-    filtered.reserve(pm.entries.size());
-
-    std::string searchLow = searchBuf;
-    std::transform(searchLow.begin(), searchLow.end(), searchLow.begin(),
-        [](unsigned char c) { return (char)std::tolower(c); });
-
-    for (int i = 0; i < (int)pm.entries.size(); ++i)
-    {
-        const auto& e = pm.entries[i];
-        if (filterCatIdx >= 0 && e.category != CATEGORIES[filterCatIdx]) continue;
-        if (!searchLow.empty())
-        {
-            auto toLow = [](std::string s) {
-                std::transform(s.begin(), s.end(), s.begin(),
-                    [](unsigned char c) { return (char)std::tolower(c); });
-                return s;
-            };
-            bool match = toLow(e.title).find(searchLow)    != std::string::npos ||
-                         toLow(e.website).find(searchLow)  != std::string::npos ||
-                         toLow(e.username).find(searchLow) != std::string::npos ||
-                         toLow(e.notes).find(searchLow)    != std::string::npos;
-            if (!match) continue;
-        }
-        filtered.push_back(i);
+        appState        = pm.HasMasterPassword() ? AppState::Locked : AppState::Setup;
+        appStateChecked = true;
+        lastActivityTime = glfwGetTime();
     }
 
     // ============================================================
@@ -1046,7 +1548,8 @@ inline void FRAME::WindowDevelopment()
     ImGui::SetNextWindowSize(ImVec2((float)width, (float)height));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.067f, 0.075f, 0.118f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, TC(ImVec4(0.067f, 0.075f, 0.118f, 1.0f),
+                                                 ImVec4(0.960f, 0.948f, 0.922f, 1.0f)));
 
     ImGui::Begin("##passvault", nullptr,
         ImGuiWindowFlags_NoDecoration          |
@@ -1064,14 +1567,16 @@ inline void FRAME::WindowDevelopment()
     //  Custom Title Bar
     // ============================================================
     const float TH    = 40.0f;   // title bar height (px)
+    const float SETTINGSW = 215.0f;   // settings tab width
+    const float THEMEW = 105.0f;   // dark/light button width
     const float XW    = 46.0f;   // close button width
-    const float LOGOW = 148.0f;  // logo / left drag-zone width
+    const float LOGOW = 110.0f;  // logo / left drag-zone width
 
     // ---- Background + accent underline ----
     dl->AddRectFilled(
         winSP,
         ImVec2(winSP.x + (float)width, winSP.y + TH),
-        IM_COL32(18, 16, 44, 255));
+        TCU(IM_COL32(18, 16, 44, 255), IM_COL32(230, 222, 205, 255)));
     dl->AddLine(
         ImVec2(winSP.x,               winSP.y + TH - 1),
         ImVec2(winSP.x + (float)width, winSP.y + TH - 1),
@@ -1080,8 +1585,8 @@ inline void FRAME::WindowDevelopment()
     // ---- Logo text (draw-list only – zero cursor interaction) ----
     {
         const char* logo = "PassVault";
-        ImVec2 tsz = fontTitle->CalcTextSizeA(21.0f, FLT_MAX, 0.0f, logo);
-        dl->AddText(fontTitle, 21.0f,
+        ImVec2 tsz = fontTitle->CalcTextSizeA(26.0f, FLT_MAX, 0.0f, logo);
+        dl->AddText(fontTitle, 26.0f,
             ImVec2(winSP.x + 14.0f, winSP.y + (TH - tsz.y) * 0.5f),
             IM_COL32(168, 158, 255, 255), logo);
     }
@@ -1094,7 +1599,8 @@ inline void FRAME::WindowDevelopment()
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.235f, 0.220f, 0.470f, 0.7f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.180f, 0.168f, 0.360f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.886f, 0.902f, 0.941f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, TC(ImVec4(0.886f, 0.902f, 0.941f, 1.0f),
+                                             ImVec4(0.100f, 0.105f, 0.120f, 1.0f)));
 
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12, 0));
 
@@ -1135,20 +1641,23 @@ inline void FRAME::WindowDevelopment()
 
     if (ImGui::BeginPopup("HelpPopup"))
     {
-        ImGui::Text("PassVault v1.0");
+        ImGui::Text("PassVault v1.1");
         ImGui::Text("Built with OpenGL + Dear ImGui");
         ImGui::Text("Built by Trevor W");
         ImGui::Separator();
         ImGui::TextDisabled("Data: data/vault.dat");
+        ImGui::TextDisabled("\t\t  data/master.auth");
+        ImGui::TextDisabled("\t\t  data/vault.key");
+
         ImGui::EndPopup();
     }
 
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(4);
 
-    // ---- Drag zone: covers full title bar minus the X button.
+    // ---- Drag zone: covers full title bar minus the X button, dark/light button, and settings tab.
     ImGui::SetCursorPos(ImVec2(0, 0));
-    ImGui::InvisibleButton("##titlebar_drag", ImVec2((float)width - XW, TH));
+    ImGui::InvisibleButton("##titlebar_drag", ImVec2((float)width - SETTINGSW, TH));
 
     {
         static POINT dragMouseStart{};
@@ -1184,18 +1693,118 @@ inline void FRAME::WindowDevelopment()
             toastMsg);
     }
 
+    // ---- Settings toggle tab ----
+
+    ImGui::SetCursorPos(ImVec2((float)width - SETTINGSW, 2));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+
+    if (PurpleButton("Settings", ImVec2(XW * 2.0f, TH - 5.0f)))
+    {
+        settingsTab = true;
+	}
+
+    ImGui::PopStyleVar();
+
+	// ---- Theme toggle button ----
+    ImGui::SetCursorPos(ImVec2((float)width - THEMEW, 1));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
+
+    // ---- DARK MODE ----
+    if (theme == 0)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.00f, 0.00f, 0.00f, 0.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.78f, 0.95f, 0.14f));  // soft cool blue
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.65f, 0.74f, 0.95f, 0.25f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.91f, 0.70f, 1.00f));  // warm moon glow
+    }
+    // ---- LIGHT MODE ----
+    else
+    {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.00f, 0.00f, 0.00f, 0.00f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.96f, 0.75f, 0.20f, 0.16f));  // soft sunny gold
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.95f, 0.68f, 0.12f, 0.26f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.98f, 0.76f, 0.15f, 1.00f));  // bright sun
+    }
+
+    ImGui::PushFont(sunMoonFontBig);
+
+    const char* icon = (theme == 0) ? "X" : "S";  
+
+    if (ImGui::Button(icon, ImVec2(XW, TH)))
+    {
+		if (++theme > 1) theme = 0;
+        
+    }
+
+    ImGui::PopFont();
+
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar();
+
     // ---- Close (X) button ----
     ImGui::SetCursorPos(ImVec2((float)width - XW, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
     ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0,     0,     0,     0   ));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.80f, 0.12f, 0.12f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.55f, 0.08f, 0.08f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.90f, 0.90f, 0.90f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text,          TC(ImVec4(0.90f, 0.90f, 0.90f, 1.0f),
+                                                      ImVec4(0.18f, 0.16f, 0.14f, 1.0f)));
     if (ImGui::Button("  X  ", ImVec2(XW, TH))) {
 		shouldExit = true;
     }
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar();
+
+    // ============================================================
+    //  Lock / Setup screen  (shown instead of vault content)
+    // ============================================================
+    if (appState != AppState::Vault)
+    {
+        RenderLockScreen();
+        ImGui::End();
+        RenderDeleteConfirmPopup();
+        RenderGenPopup();
+        return;
+    }
+
+    // ============================================================
+	//  Settings screen (overlays vault content as a card) – triggered by Settings button in title bar
+    // ============================================================
+    if (settingsTab)
+    {
+        RenderSettingsScreen();
+        ImGui::End();
+        return;
+	}
+
+    // ---- Build filtered entry list (vault only) ----
+    std::vector<int> filtered;
+    filtered.reserve(pm.entries.size());
+    {
+        std::string searchLow = searchBuf;
+        std::transform(searchLow.begin(), searchLow.end(), searchLow.begin(),
+            [](unsigned char c) { return (char)std::tolower(c); });
+
+        for (int i = 0; i < (int)pm.entries.size(); ++i)
+        {
+            const auto& e = pm.entries[i];
+            if (filterCatIdx >= 0 && e.category != CATEGORIES[filterCatIdx]) continue;
+            if (!searchLow.empty())
+            {
+                auto toLow = [](std::string s) {
+                    std::transform(s.begin(), s.end(), s.begin(),
+                        [](unsigned char c) { return (char)std::tolower(c); });
+                    return s;
+                };
+                bool match = toLow(e.title).find(searchLow)    != std::string::npos ||
+                             toLow(e.website).find(searchLow)  != std::string::npos ||
+                             toLow(e.username).find(searchLow) != std::string::npos ||
+                             toLow(e.notes).find(searchLow)    != std::string::npos;
+                if (!match) continue;
+            }
+            filtered.push_back(i);
+        }
+    }
 
     // ============================================================
     //  Content area  (sidebar + divider + detail)
@@ -1207,7 +1816,8 @@ inline void FRAME::WindowDevelopment()
     ImGui::SetCursorPos(ImVec2(0, TH));
 
     // Sidebar
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.047f, 0.055f, 0.086f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, TC(ImVec4(0.047f, 0.055f, 0.086f, 1.0f),
+                                                ImVec4(0.940f, 0.926f, 0.898f, 1.0f)));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 0));
     ImGui::BeginChild("##sidebar", ImVec2(SIDEBAR_W, contentH), false, ImGuiWindowFlags_NoScrollbar);
     RenderSidebar(filtered);
@@ -1218,7 +1828,8 @@ inline void FRAME::WindowDevelopment()
     ImGui::SameLine(0, 0);
 
     // 1-px vertical divider
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.118f, 0.137f, 0.212f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, TC(ImVec4(0.118f, 0.137f, 0.212f, 1.0f),
+                                                ImVec4(0.712f, 0.692f, 0.648f, 1.0f)));
     ImGui::BeginChild("##divider", ImVec2(1, contentH), false);
     ImGui::EndChild();
     ImGui::PopStyleColor();
@@ -1226,7 +1837,8 @@ inline void FRAME::WindowDevelopment()
     ImGui::SameLine(0, 0);
 
     // Detail panel  (leave GRIP px at the bottom for the resize handle)
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.078f, 0.086f, 0.133f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, TC(ImVec4(0.078f, 0.086f, 0.133f, 1.0f),
+                                                ImVec4(0.960f, 0.948f, 0.922f, 1.0f)));
     ImGui::BeginChild("##detail", ImVec2(-1, contentH - GRIP), false, ImGuiWindowFlags_NoScrollbar);
     RenderDetailPanel();
     ImGui::EndChild();
@@ -1303,17 +1915,60 @@ inline void FRAME::RenderLoop()
 
     while (!glfwWindowShouldClose(window))
     {
+        if (theme != filterTheme)
+        {
+            switch (theme)
+            {
+                case 0:
+                    DarkTheme();
+                    filterTheme = 0;
+                    break;
+                case 1:
+                    LightTheme();
+                    filterTheme = 1;
+                    break;
+                default:
+                    DarkTheme();
+                    filterTheme = 0;
+                    break;
+            }
+        }
+
         if (shouldExit)
             glfwSetWindowShouldClose(window, true);
 
         glfwPollEvents();
 
         glClear(GL_COLOR_BUFFER_BIT);
-        glClearColor(0.067f, 0.075f, 0.118f, 1.0f);
+        if (theme == 0)
+            glClearColor(0.067f, 0.075f, 0.118f, 1.0f);
+        else
+            glClearColor(0.960f, 0.948f, 0.922f, 1.0f);
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+
+        // ---- Activity tracking + auto-lock ----
+        {
+            ImGuiIO& io = ImGui::GetIO();
+            bool active = fabsf(io.MouseDelta.x) > 0.5f || fabsf(io.MouseDelta.y) > 0.5f
+                       || io.MouseWheel != 0.0f
+                       || io.InputQueueCharacters.Size > 0;
+            if (!active)
+                for (int i = 0; i < IM_ARRAYSIZE(io.MouseDown); ++i)
+                    if (io.MouseDown[i]) { active = true; break; }
+
+            if (active) lastActivityTime = glfwGetTime();
+
+            if (appState == AppState::Vault &&
+                glfwGetTime() - lastActivityTime > autoLockTimeout && autoLockTimeout != -1)
+            {
+                appState = AppState::Locked;
+                lockErrMsg[0] = '\0';
+                memset(lockPwBuf, 0, sizeof(lockPwBuf));
+            }
+        }
 
         WindowDevelopment();
 

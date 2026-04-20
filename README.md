@@ -8,7 +8,10 @@ Built in C++ using Dear ImGui, GLFW, OpenGL, and libsodium. No cloud. No account
 
 ### ✨ Features
 - Beautiful custom dark UI with drag-and-drop title bar
-- Strong encryption using libsodium
+- **Master password** protection with strong Argon2 key derivation
+- **Auto-lock** after inactivity (30s, 1m, 2m, 3m, or Never)
+- **Dark and Light mode** toggle
+- Dedicated **Settings tab** for all your preferences
 - Built-in password generator with live preview
 - Smart search + category filtering
 - Color-coded categories (Personal, Work, Finance, Social, Other)
@@ -29,7 +32,7 @@ Built in C++ using Dear ImGui, GLFW, OpenGL, and libsodium. No cloud. No account
 3. Build in Release or Debug mode
 4. Run `Password Manager.exe`
 
-Your encrypted vault is created automatically on first launch.
+Your encrypted vault is created automatically on first launch (just set your master password).
 
 ### License
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

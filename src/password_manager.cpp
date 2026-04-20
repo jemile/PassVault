@@ -98,7 +98,7 @@ bool PasswordManager::LoadFromFile()
     {
         std::string plaintext = CRYPTO::DecryptWithKey(encrypted, encryptionKey);
 
-        // Parse the decrypted text (your old parsing logic)
+        // Parse the decrypted text
         std::istringstream iss(plaintext);
         std::string line;
         PasswordEntry current;
@@ -141,8 +141,6 @@ bool PasswordManager::LoadFromFile()
 }
 // ============================================================
 //  SaveToFile
-//  NOTE: To add encryption later, encrypt the serialised string
-//        before writing and decrypt after reading.
 // ============================================================
 bool PasswordManager::SaveToFile()
 {
@@ -324,10 +322,13 @@ const char* PasswordManager::PasswordStrengthLabel(int score)
 }
 
 // ============================================================
-//  Auto key management
+//  Auto key management  (legacy fallback – skipped when master password is active)
 // ============================================================
 void PasswordManager::LoadOrCreateEncryptionKey()
 {
+    // If the key was already set via UnlockWithMasterPassword, don't touch it.
+    if (!encryptionKey.empty()) return;
+
     std::string keyPath = (std::filesystem::path(dataFilePath).parent_path() / "vault.key").string();
 
     std::ifstream keyFile(keyPath, std::ios::binary);
@@ -337,9 +338,82 @@ void PasswordManager::LoadOrCreateEncryptionKey()
     }
     else
     {
-        // First run generate and save key
         encryptionKey = CRYPTO::GenerateRandomKey();
         std::ofstream out(keyPath, std::ios::binary);
         out.write(reinterpret_cast<const char*>(encryptionKey.data()), encryptionKey.size());
     }
+}
+
+// ============================================================
+//  Master password management
+// ============================================================
+bool PasswordManager::HasMasterPassword() const
+{
+    std::string authPath = (std::filesystem::path(dataFilePath).parent_path() / "master.auth").string();
+    return std::filesystem::exists(authPath);
+}
+
+bool PasswordManager::SetupMasterPassword(const std::string& password)
+{
+    auto dataDir = std::filesystem::path(dataFilePath).parent_path();
+    std::string authPath = (dataDir / "master.auth").string();
+    std::string keyPath  = (dataDir / "vault.key").string();
+
+    // 1. Hash the master password (Argon2id, salt embedded)
+    std::string hash = CRYPTO::HashMasterPassword(password);
+    if (hash.empty()) return false;
+
+    // 2. Generate a fresh random vault key
+    encryptionKey = CRYPTO::GenerateRandomKey();
+
+    // 3. Wrap the vault key with the master password
+    auto wrappedKey = CRYPTO::EncryptKeyWithPassword(password, encryptionKey);
+    if (wrappedKey.empty()) return false;
+
+    // 4. Persist both files
+    {
+        std::ofstream f(authPath, std::ios::binary);
+        if (!f.is_open()) return false;
+        f.write(hash.c_str(), hash.size());
+    }
+    {
+        std::ofstream f(keyPath, std::ios::binary);
+        if (!f.is_open()) return false;
+        f.write(reinterpret_cast<const char*>(wrappedKey.data()), wrappedKey.size());
+    }
+    return true;
+}
+
+bool PasswordManager::UnlockWithMasterPassword(const std::string& password)
+{
+    auto dataDir = std::filesystem::path(dataFilePath).parent_path();
+    std::string authPath = (dataDir / "master.auth").string();
+    std::string keyPath  = (dataDir / "vault.key").string();
+
+    // 1. Verify password against stored hash
+    {
+        std::ifstream f(authPath, std::ios::binary);
+        if (!f.is_open()) return false;
+        std::string hash(std::istreambuf_iterator<char>(f), {});
+        if (!CRYPTO::VerifyMasterPassword(password, hash)) return false;
+    }
+
+    // 2. Decrypt the vault key
+    {
+        std::ifstream f(keyPath, std::ios::binary);
+        if (!f.is_open()) return false;
+        std::vector<unsigned char> wrapped(std::istreambuf_iterator<char>(f), {});
+        encryptionKey = CRYPTO::DecryptKeyWithPassword(password, wrapped);
+        if (encryptionKey.empty()) return false;
+    }
+    return true;
+}
+
+bool PasswordManager::VerifyMasterPassword(const std::string& password) const
+{
+    std::string authPath = (std::filesystem::path(dataFilePath).parent_path() / "master.auth").string();
+    std::ifstream f(authPath, std::ios::binary);
+    if (!f.is_open()) return false;
+    std::string hash(std::istreambuf_iterator<char>(f), {});
+    return CRYPTO::VerifyMasterPassword(password, hash);
 }

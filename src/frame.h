@@ -16,22 +16,32 @@ namespace FRAME
     extern int         width;
     extern int         height;
     extern int         menuTab;
+    extern int         theme;
+	extern int         filterTheme;
+    extern int         autoLockIndex;
+    extern float       autoLockTimeout;
     extern bool        shouldExit;
+    extern bool        settingsTab;
 
     extern GLFWwindow* window;
 
-    extern ImFont*     font;        // regular  (~16 px)
-    extern ImFont*     fontTitle;   // headings (~21 px)
-    extern ImFont*     fontSmall;   // captions (~13 px)
+    extern ImFont*     font;            // regular  (~20 px)
+    extern ImFont*     fontTitle;       // headings (~25 px)
+    extern ImFont*     fontSmall;       // captions (~16 px)
+	extern ImFont*     sunMoonFontBig;  // icons (32 px)
 
     extern void framebuffer_size_callback(GLFWwindow* window, int w, int h);
 
     extern void SetupImGuiStyle();
+    extern void DarkTheme();
+    extern void LightTheme();
     extern void InitGlfwFlags();
     extern void CenterSpacing(const char* label);
     extern void RenderLoop();
     extern void WindowDevelopment();
     extern void SetupFrame();
     extern void UnloadFrame();
+    extern void RenderSettingsScreen();
+    extern void RenderLockScreen();
 
 }

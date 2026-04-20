@@ -34,8 +34,13 @@ public:
 
     PasswordManager();
 
-    // File I/O  (format is encryption-ready: swap SaveToFile/LoadFromFile
-    //            to call an AES routine before writing / after reading)
+    // Master password management
+    bool HasMasterPassword() const;             // true if master.auth exists on disk
+    bool SetupMasterPassword(const std::string& password);     // first-run: hash + store
+    bool UnlockWithMasterPassword(const std::string& password);// verify + load vault key
+    bool VerifyMasterPassword(const std::string& password) const; // verify only (re-lock)
+
+    // File I/O
     bool LoadFromFile();
     bool SaveToFile();
 

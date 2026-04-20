@@ -65,4 +65,88 @@ namespace CRYPTO
 
         return std::string(plaintext.begin(), plaintext.end());
     }
+
+    // ============================================================
+    //  Master password  (Argon2id)
+    // ============================================================
+    std::string HashMasterPassword(const std::string& password)
+    {
+        // crypto_pwhash_str produces a null-terminated ASCII string that
+        // embeds the salt, algorithm id, and parameters – safe to store as-is.
+        char hash[crypto_pwhash_STRBYTES] = {};
+        if (crypto_pwhash_str(hash, password.c_str(), password.size(),
+                crypto_pwhash_OPSLIMIT_INTERACTIVE,
+                crypto_pwhash_MEMLIMIT_INTERACTIVE) != 0)
+            return {};                          // out of memory
+        return std::string(hash, crypto_pwhash_STRBYTES);
+    }
+
+    bool VerifyMasterPassword(const std::string& password, const std::string& storedHash)
+    {
+        if (storedHash.size() < crypto_pwhash_STRBYTES) return false;
+        return crypto_pwhash_str_verify(
+            storedHash.c_str(),
+            password.c_str(), password.size()) == 0;
+    }
+
+    std::vector<unsigned char> EncryptKeyWithPassword(const std::string& password,
+        const std::vector<unsigned char>& key)
+    {
+        // Derive a 32-byte wrapping key from the master password + fresh salt
+        unsigned char salt[crypto_pwhash_SALTBYTES];
+        randombytes_buf(salt, sizeof(salt));
+
+        unsigned char derived[crypto_secretbox_KEYBYTES];
+        if (crypto_pwhash(derived, sizeof(derived),
+                password.c_str(), password.size(), salt,
+                crypto_pwhash_OPSLIMIT_INTERACTIVE,
+                crypto_pwhash_MEMLIMIT_INTERACTIVE,
+                crypto_pwhash_ALG_DEFAULT) != 0)
+            return {};
+
+        // Encrypt the vault key with the derived key
+        unsigned char nonce[crypto_secretbox_NONCEBYTES];
+        randombytes_buf(nonce, sizeof(nonce));
+
+        std::vector<unsigned char> ct(key.size() + crypto_secretbox_MACBYTES);
+        crypto_secretbox_easy(ct.data(), key.data(), key.size(), nonce, derived);
+
+        // Layout: [salt | nonce | ciphertext]
+        std::vector<unsigned char> result;
+        result.insert(result.end(), salt,  salt  + sizeof(salt));
+        result.insert(result.end(), nonce, nonce + sizeof(nonce));
+        result.insert(result.end(), ct.begin(), ct.end());
+        return result;
+    }
+
+    std::vector<unsigned char> DecryptKeyWithPassword(const std::string& password,
+        const std::vector<unsigned char>& data)
+    {
+        const size_t hdr = crypto_pwhash_SALTBYTES + crypto_secretbox_NONCEBYTES;
+        if (data.size() < hdr + crypto_secretbox_MACBYTES) return {};
+
+        unsigned char salt[crypto_pwhash_SALTBYTES];
+        std::copy(data.begin(), data.begin() + crypto_pwhash_SALTBYTES, salt);
+
+        unsigned char nonce[crypto_secretbox_NONCEBYTES];
+        std::copy(data.begin() + crypto_pwhash_SALTBYTES,
+                  data.begin() + hdr, nonce);
+
+        unsigned char derived[crypto_secretbox_KEYBYTES];
+        if (crypto_pwhash(derived, sizeof(derived),
+                password.c_str(), password.size(), salt,
+                crypto_pwhash_OPSLIMIT_INTERACTIVE,
+                crypto_pwhash_MEMLIMIT_INTERACTIVE,
+                crypto_pwhash_ALG_DEFAULT) != 0)
+            return {};
+
+        const unsigned char* ct = data.data() + hdr;
+        size_t ct_len           = data.size() - hdr;
+
+        std::vector<unsigned char> plain(ct_len - crypto_secretbox_MACBYTES);
+        if (crypto_secretbox_open_easy(plain.data(), ct, ct_len, nonce, derived) != 0)
+            return {};
+
+        return plain;
+    }
 }
