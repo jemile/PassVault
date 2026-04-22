@@ -80,16 +80,28 @@
     <LibraryPath>$(ProjectDir)dependencies\lib;$(LibraryPath)</LibraryPath>
     <TargetName>Password Manager</TargetName>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ExecutablePath>$(ExecutablePath)</ExecutablePath>
+    <IncludePath>$(ProjectDir)dependencies\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(ProjectDir)dependencies\lib;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ExecutablePath>$(ExecutablePath)</ExecutablePath>
+    <IncludePath>$(ProjectDir)dependencies\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(ProjectDir)dependencies\lib;$(LibraryPath)</LibraryPath>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;SODIUM_STATIC</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>$(ProjectDir)dependencies\lib\glfw3.lib;$(ProjectDir)dependencies\lib\libsodium.lib;libsodium.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -98,14 +110,16 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;SODIUM_STATIC</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>$(ProjectDir)dependencies\lib\glfw3.lib;$(ProjectDir)dependencies\lib\libsodium.lib;libsodium.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -152,7 +166,11 @@
     <ClCompile Include="src\frame.cpp" />
     <ClCompile Include="src\glad.c" />
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\panels.cpp" />
     <ClCompile Include="src\password_manager.cpp" />
+    <ClCompile Include="src\popups.cpp" />
+    <ClCompile Include="src\render.cpp" />
+    <ClCompile Include="src\screens.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="dependencies\include\ImGui\imconfig.h" />
@@ -164,11 +182,17 @@
     <ClInclude Include="dependencies\include\ImGui\imstb_rectpack.h" />
     <ClInclude Include="dependencies\include\ImGui\imstb_textedit.h" />
     <ClInclude Include="dependencies\include\ImGui\imstb_truetype.h" />
+    <ClInclude Include="src\app_state.h" />
     <ClInclude Include="src\crypto.h" />
     <ClInclude Include="src\frame.h" />
     <ClInclude Include="src\glad.h" />
     <ClInclude Include="src\hatten_font.h" />
+    <ClInclude Include="src\panels.h" />
     <ClInclude Include="src\password_manager.h" />
+    <ClInclude Include="src\popups.h" />
+    <ClInclude Include="src\render.h" />
+    <ClInclude Include="src\screens.h" />
+    <ClInclude Include="src\sun_moon_font.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
