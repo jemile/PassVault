@@ -21,10 +21,19 @@ Built in C++ with Dear ImGui. No cloud. No accounts. No telemetry. Your data nev
 - Fully resizable + remembers window position
 - 100% local storage — vaults saved as `.pv` files
 
-### 🚀 Downloads
+### 🚀 Downloads (v1.2.0)
 
-- **[PassVault-v1.2.0-Setup.exe]** (Recommended)
-- **[PassVault-v1.2.0-Win64.zip]** (Portable)
+- **[PassVault-v1.2.0-Setup.exe]** (Recommended - Installer)  
+  [Download](https://github.com/jemile/PassVault/releases/download/v1.2.0/PassVault-v1.2.0-Setup.exe)
+
+- **[PassVault-v1.2.0-Win64.zip]** (Portable)  
+  [Download](https://github.com/jemile/PassVault/releases/download/v1.2.0/PassVault-v1.2.0-Win64.zip)
+
+**System Requirements:**
+- Windows 10 or 11 (64-bit)
+- Installation or just extract & run
+
+> **Note:** x86 (32-bit) build is currently not supported.
 
 ### Tech Stack
 
