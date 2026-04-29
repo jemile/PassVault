@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // ============================================================
-//  frame.cpp  –  Window lifecycle, render loop, and orchestration
+//  frame.cpp  -  Window lifecycle, render loop, and orchestration
 //
 //  Owns: FRAME globals, UIState g_ui, title bar, resize grip,
 //        layout helpers, and the main window / render loop.
@@ -28,20 +28,23 @@
 #include "screens.h"
 #include "popups.h"
 #include "render.h"
+#include "settings.h"
 #include "crypto.h"
 #include "hatten_font.h"
 #include "sun_moon_font.h"
+#include <commdlg.h>   // GetOpenFileName / GetSaveFileName
+#include "updater.h"
 
 
 // ============================================================
-//  FRAME Namespace – Global Variables
+//  FRAME Namespace - Global Variables
 // ============================================================
 namespace FRAME
 {
     // Window & Display State
     int         width       = 1280;
     int         height      = 720;
-    int         theme       = 0;
+    int         theme = 0;
     int         filterTheme = -1;   // -1 forces theme apply on first frame
     bool        shouldExit  = false;
     bool        settingsTab = false;
@@ -55,6 +58,7 @@ namespace FRAME
     ImFont*     font        = nullptr;
     ImFont*     fontTitle   = nullptr;
     ImFont*     fontSmall   = nullptr;
+    ImFont*     fontTiny = nullptr;
     ImFont*     sunMoonFontBig = nullptr;
 }
 
@@ -127,40 +131,57 @@ static void UpdateActivityTracking()
 
 // ============================================================
 //  Data: Build the filtered + searched entry index list
+//  Favorites are always sorted to the top of the result.
 // ============================================================
 static std::vector<int> BuildFilteredList()
 {
-    using namespace FRAME;
-
     std::vector<int> filtered;
     filtered.reserve(g_ui.pm.entries.size());
 
-    std::string searchLow = g_ui.searchBuf;
-    std::transform(searchLow.begin(), searchLow.end(), searchLow.begin(),
-        [](unsigned char c) { return (char)std::tolower(c); });
+    auto toLow = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(),
+            [](unsigned char c) { return (char)std::tolower(c); });
+        return s;
+    };
+
+    std::string searchLow = toLow(std::string(g_ui.searchBuf));
 
     for (int i = 0; i < (int)g_ui.pm.entries.size(); ++i)
     {
         const auto& e = g_ui.pm.entries[i];
 
-        if (g_ui.filterCatIdx >= 0 && e.category != CATEGORIES[g_ui.filterCatIdx]) continue;
+        // Favorites filter
+        if (g_ui.filterFavorites && !e.isFavorite) continue;
 
+        // Tag filter  (empty filterTag means "All")
+        if (!g_ui.filterTag.empty())
+        {
+            bool hasTag = std::find(e.tags.begin(), e.tags.end(), g_ui.filterTag) != e.tags.end();
+            if (!hasTag) continue;
+        }
+
+        // Search filter
         if (!searchLow.empty())
         {
-            auto toLow = [](std::string s) {
-                std::transform(s.begin(), s.end(), s.begin(),
-                    [](unsigned char c) { return (char)std::tolower(c); });
-                return s;
-            };
+            // Also search inside tags
+            std::string tagStr;
+            for (const auto& t : e.tags) { tagStr += t; tagStr += ' '; }
+
             bool match = toLow(e.title).find(searchLow)    != std::string::npos ||
                          toLow(e.website).find(searchLow)  != std::string::npos ||
                          toLow(e.username).find(searchLow) != std::string::npos ||
-                         toLow(e.notes).find(searchLow)    != std::string::npos;
+                         toLow(e.notes).find(searchLow)    != std::string::npos ||
+                         toLow(tagStr).find(searchLow)     != std::string::npos;
             if (!match) continue;
         }
 
         filtered.push_back(i);
     }
+
+    // Sort: favorites first, preserve relative order within each group
+    std::stable_sort(filtered.begin(), filtered.end(), [](int a, int b) {
+        return g_ui.pm.entries[a].isFavorite > g_ui.pm.entries[b].isFavorite;
+    });
 
     return filtered;
 }
@@ -191,6 +212,10 @@ static void SetupImGuiStyle()
 
     fontSmall = io.Fonts->AddFontFromMemoryTTF(
         (void*)HattenFont, sizeof(HattenFont), 16.0f,
+        &cfg, io.Fonts->GetGlyphRangesCyrillic());
+
+    fontTiny = io.Fonts->AddFontFromMemoryTTF(
+        (void*)HattenFont, sizeof(HattenFont), 12.0f,
         &cfg, io.Fonts->GetGlyphRangesCyrillic());
 
     sunMoonFontBig = io.Fonts->AddFontFromMemoryTTF(
@@ -242,6 +267,53 @@ static void InitGlfwFlags()
 #endif
 }
 
+void FRAME::ExportBackup()
+{
+    OPENFILENAMEA ofn = {};
+    char szFile[512]  = {};
+    ofn.lStructSize   = sizeof(ofn);
+    ofn.lpstrFilter   = "PassVault Backup (*.pvbackup)\0*.pvbackup\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFile     = szFile;
+    ofn.nMaxFile      = sizeof(szFile);
+    ofn.lpstrDefExt   = "pvbackup";
+    ofn.lpstrTitle    = "Export Encrypted Backup";
+    ofn.Flags         = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    if (GetSaveFileNameA(&ofn))
+    {
+        if (g_ui.pm.ExportBackup(szFile))
+            RENDER::ShowToast("Backup exported!", g_ui.toastMsg, g_ui.toastTimer);
+        else
+            RENDER::ShowToast("Export failed.", g_ui.toastMsg, g_ui.toastTimer);
+    }
+}
+
+void FRAME::ImportBackup()
+{
+    OPENFILENAMEA ofn = {};
+    char szFile[512]  = {};
+    ofn.lStructSize   = sizeof(ofn);
+    ofn.lpstrFilter   = "PassVault Backup (*.pvbackup)\0*.pvbackup\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFile     = szFile;
+    ofn.nMaxFile      = sizeof(szFile);
+    ofn.lpstrTitle    = "Import Encrypted Backup";
+    ofn.Flags         = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if (GetOpenFileNameA(&ofn))
+    {
+        int before = (int)g_ui.pm.entries.size();
+        if (g_ui.pm.ImportBackup(szFile, true /*merge*/))
+        {
+            int  added = (int)g_ui.pm.entries.size() - before;
+            char msg[80];
+            snprintf(msg, sizeof(msg), "Imported %d entr%s.",
+                added, added == 1 ? "y" : "ies");
+            RENDER::ShowToast(msg, g_ui.toastMsg, g_ui.toastTimer);
+        }
+        else
+            RENDER::ShowToast("Import failed.", g_ui.toastMsg, g_ui.toastTimer);
+    }
+}
+
+
 
 // ============================================================
 //  Title Bar: Background, logo, menus, drag zone, toast,
@@ -258,7 +330,7 @@ static void RenderTitleBar()
     const float SETTINGSW = 215.0f;  // settings + theme + close total width
     const float THEMEW    = 105.0f;  // dark/light button width
     const float XW        = 46.0f;   // close button width
-    const float LOGOW     = 110.0f;  // logo / left drag-zone width
+    const float LOGOW     = 150.0f;  // logo / left drag-zone width
 
     // Background + accent underline
     dl->AddRectFilled(
@@ -270,13 +342,17 @@ static void RenderTitleBar()
         ImVec2(winSP.x + (float)width, winSP.y + TH - 1),
         IM_COL32(108, 100, 220, 200), 1.5f);
 
-    // Logo (draw-list only – no cursor interaction)
+    // Logo (draw-list only - no cursor interaction)
     {
-        const char* logo = "PassVault";
-        ImVec2 tsz = fontTitle->CalcTextSizeA(26.0f, FLT_MAX, 0.0f, logo);
+
+
+        static const std::string logo =
+            "PassVault " + std::string(UPDATER::CURRENT_VERSION);
+
+        ImVec2 tsz = fontTitle->CalcTextSizeA(26.0f, FLT_MAX, 0.0f, logo.c_str());
         dl->AddText(fontTitle, 26.0f,
             ImVec2(winSP.x + 14.0f, winSP.y + (TH - tsz.y) * 0.5f),
-            IM_COL32(168, 158, 255, 255), logo);
+            IM_COL32(168, 158, 255, 255), logo.c_str());
     }
 
     // File / View / Help menus
@@ -299,10 +375,18 @@ static void RenderTitleBar()
         if (ImGui::MenuItem("New Entry", "Ctrl+N"))
         {
             ClearEditBuffers(g_ui);
-            g_ui.editMode   = true;
-            g_ui.isNewEntry = true;
+            g_ui.editMode    = true;
+            g_ui.isNewEntry  = true;
             g_ui.selectedIdx = -1;
         }
+        ImGui::Separator();
+
+        if (ImGui::MenuItem("Export Backup..."))
+            ExportBackup();
+
+        if (ImGui::MenuItem("Import Backup..."))
+            ImportBackup();
+
         ImGui::Separator();
         if (ImGui::MenuItem("Exit"))
             shouldExit = true;
@@ -317,24 +401,29 @@ static void RenderTitleBar()
     if (ImGui::BeginPopup("ViewPopup"))
     {
         if (ImGui::MenuItem("Clear Search"))        memset(g_ui.searchBuf, 0, sizeof(g_ui.searchBuf));
-        if (ImGui::MenuItem("Show All Categories")) g_ui.filterCatIdx = -1;
+        if (ImGui::MenuItem("Show All")) { g_ui.filterTag = ""; g_ui.filterFavorites = false; }
         ImGui::EndPopup();
     }
 
     ImGui::SameLine();
 
-    // Help menu
-    if (ImGui::Button(" Help ", ImVec2(65, 0)))
-        ImGui::OpenPopup("HelpPopup");
-    if (ImGui::BeginPopup("HelpPopup"))
+    // About menu
+    if (ImGui::Button(" About ", ImVec2(65, 0)))
+        ImGui::OpenPopup("AboutPopup");
+    if (ImGui::BeginPopup("AboutPopup"))
     {
-        ImGui::Text("PassVault v1.1");
+        static const std::string verionText =
+            "PassVault " + std::string(UPDATER::CURRENT_VERSION);
+
+        ImGui::Text(verionText.c_str());
         ImGui::Text("Built with OpenGL + Dear ImGui");
         ImGui::Text("Built by Trevor W");
         ImGui::Separator();
         ImGui::TextDisabled("Data: data/vault.dat");
         ImGui::TextDisabled("\t\t  data/master.auth");
         ImGui::TextDisabled("\t\t  data/vault.key");
+        ImGui::TextDisabled("\t\t  data/settings.ini");
+
         ImGui::EndPopup();
     }
 
@@ -387,14 +476,14 @@ static void RenderTitleBar()
     ImGui::SetCursorPos(ImVec2((float)width - THEMEW, 1));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f);
 
-    if (theme == 0)  // Dark mode – show moon
+    if (theme == 0)  // Dark mode - show moon
     {
         ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.00f, 0.00f, 0.00f, 0.00f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.78f, 0.95f, 0.14f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.65f, 0.74f, 0.95f, 0.25f));
         ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.94f, 0.91f, 0.70f, 1.00f));  // warm moon glow
     }
-    else             // Light mode – show sun
+    else             // Light mode - show sun
     {
         ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.00f, 0.00f, 0.00f, 0.00f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.96f, 0.75f, 0.20f, 0.16f));
@@ -406,7 +495,10 @@ static void RenderTitleBar()
     // X is moon | S is sun
     const char* icon = (theme == 0) ? "X" : "S";
     if (ImGui::Button(icon, ImVec2(XW, TH)))
+    {
         if (++theme > 1) theme = 0;
+        SETTINGS::Save(theme, autoLockIndex);  // persist theme change
+    }
     ImGui::PopFont();
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar();
@@ -428,7 +520,7 @@ static void RenderTitleBar()
 
 
 // ============================================================
-//  Layout: Resize grip – bottom-right corner drag handle
+//  Layout: Resize grip - bottom-right corner drag handle
 // ============================================================
 static void RenderResizeGrip()
 {
@@ -458,8 +550,8 @@ static void RenderResizeGrip()
         {
             POINT cur{};
             GetCursorPos(&cur);
-            int newW = std::max(800, resizeStartW + static_cast<int>(cur.x - resizeMouseStart.x));
-            int newH = std::max(500, resizeStartH + static_cast<int>(cur.y - resizeMouseStart.y));
+            int newW = std::max(900, resizeStartW + static_cast<int>(cur.x - resizeMouseStart.x));
+            int newH = std::max(650, resizeStartH + static_cast<int>(cur.y - resizeMouseStart.y));
             glfwSetWindowSize(window, newW, newH);
         }
     }
@@ -481,7 +573,7 @@ static void RenderResizeGrip()
 
 
 // ============================================================
-//  Layout: Vault content area – sidebar, divider, detail panel,
+//  Layout: Vault content area - sidebar, divider, detail panel,
 //          and resize grip
 // ============================================================
 static void RenderContentArea(const std::vector<int>& filtered)
@@ -540,7 +632,7 @@ static void WindowDevelopment()
 
     CheckInitialAppState();
 
-    // Full-screen root window (no OS decoration – we draw our own)
+    // Full-screen root window (no OS decoration - we draw our own)
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImVec2((float)width, (float)height));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    ImVec2(0, 0));
@@ -565,8 +657,6 @@ static void WindowDevelopment()
     {
         RenderLockScreen(g_ui);
         ImGui::End();
-        RenderDeleteConfirmPopup(g_ui);
-        RenderGenPopup(g_ui);
         return;
     }
 
@@ -587,6 +677,7 @@ static void WindowDevelopment()
     // Modals
     RenderDeleteConfirmPopup(g_ui);
     RenderGenPopup(g_ui);
+    RenderHistoryPopup(g_ui);
 }
 
 
@@ -602,7 +693,7 @@ static void framebuffer_size_callback(GLFWwindow* /*win*/, int w, int h)
 
 
 // ============================================================
-//  Loop: Main render loop – runs until window close is requested
+//  Loop: Main render loop - runs until window close is requested
 // ============================================================
 static void RenderLoop()
 {
@@ -638,11 +729,21 @@ static void RenderLoop()
 
 
 // ============================================================
-//  FRAME::SetupFrame – Initialize window, OpenGL, ImGui, and run
+//  FRAME::SetupFrame - Initialize window, OpenGL, ImGui, and run
 // ============================================================
 void FRAME::SetupFrame()
 {
     CRYPTO::Init();
+
+    // Load persisted settings before opening the window so the
+    // correct theme is applied from the very first frame.
+    SETTINGS::Load();
+    FRAME::theme       = SETTINGS::savedTheme;
+    FRAME::autoLockIndex = SETTINGS::savedAutoLockIdx;
+    {
+        const float timeouts[] = { 30.0f, 60.0f, 120.0f, 180.0f, -1.0f };
+        FRAME::autoLockTimeout = timeouts[FRAME::autoLockIndex];
+    }
 
     InitGlfwFlags();
 
@@ -655,7 +756,7 @@ void FRAME::SetupFrame()
     }
 
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
-    glfwSetWindowSizeLimits(window, 800, 500, GLFW_DONT_CARE, GLFW_DONT_CARE);
+    glfwSetWindowSizeLimits(window, 900, 650, GLFW_DONT_CARE, GLFW_DONT_CARE);
     glfwMakeContextCurrent(window);
 
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
@@ -679,7 +780,7 @@ void FRAME::SetupFrame()
 
 
 // ============================================================
-//  FRAME::UnloadFrame – Shut down ImGui and GLFW cleanly
+//  FRAME::UnloadFrame - Shut down ImGui and GLFW cleanly
 // ============================================================
 void FRAME::UnloadFrame()
 {

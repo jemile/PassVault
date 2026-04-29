@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // ============================================================
-//  render.h  –  Reusable ImGui helpers, theme utilities,
+//  render.h  -  Reusable ImGui helpers, theme utilities,
 //               and string conversion declarations
 //
 //  Only tiny one-liners are kept inline here.  All function
@@ -19,7 +19,7 @@
 namespace THEME
 {
     // ============================================================
-    //  Inline helpers – pick dark or light colour at runtime
+    //  Inline helpers - pick dark or light colour at runtime
     //  (kept inline because they are called on every widget draw)
     // ============================================================
     inline ImVec4 TC(ImVec4 dark, ImVec4 light, int theme)
@@ -46,7 +46,7 @@ namespace THEME
         }
     }
 
-    // Full theme colour tables – defined in render.cpp
+    // Full theme colour tables - defined in render.cpp
     void DarkTheme();
     void LightTheme();
 }
@@ -69,6 +69,9 @@ namespace RENDER
 
     // Small dimmed section-label heading
     void FieldLabel(const char* txt, ImFont* font, int theme);
+
+	// Danger/red section label (for caution)
+    void DangerFieldLabel(const char* txt, ImFont* font, int theme);
 
     // Accent-coloured push buttons
     bool GreenButton (const char* label);

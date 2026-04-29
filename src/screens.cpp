@@ -3,19 +3,28 @@
 // SPDX-License-Identifier: MIT
 
 // ============================================================
-//  screens.cpp  –  Full-screen overlay renderers
+//  screens.cpp  -  Full-screen overlay renderers
 //  Contains: RenderLockScreen, RenderSettingsScreen
 // ============================================================
+
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <shellapi.h>  // ShellExecuteA for opening download URL
 
 #include "screens.h"
 #include "frame.h"
 #include "render.h"
+#include "settings.h"
+#include "updater.h"
 #include <GLFW/glfw3.h>
 #include <cstring>
+#include <cmath>
+#include <algorithm>
 
 
 // ============================================================
-//  RenderLockScreen  –  Initial setup (first run) or vault unlock
+//  RenderLockScreen  -  Initial setup (first run) or vault unlock
 // ============================================================
 void RenderLockScreen(UIState& s)
 {
@@ -196,8 +205,8 @@ void RenderLockScreen(UIState& s)
         {
             s.lockWorking = true;
             bool ok = s.pmInitialized
-                ? s.pm.VerifyMasterPassword(pw)       // vault in memory – verify only
-                : s.pm.UnlockWithMasterPassword(pw);  // first unlock – decrypt vault key
+                ? s.pm.VerifyMasterPassword(pw)       // vault in memory - verify only
+                : s.pm.UnlockWithMasterPassword(pw);  // first unlock - decrypt vault key
 
             if (ok)
             {
@@ -230,15 +239,15 @@ void RenderLockScreen(UIState& s)
 
 
 // ============================================================
-//  RenderSettingsScreen  –  User customization and app info
+//  RenderSettingsScreen  -  User customization and app info
 // ============================================================
-void RenderSettingsScreen(UIState& /*s*/)
+void RenderSettingsScreen(UIState& s)
 {
     using namespace FRAME;
 
     const float TH          = 40.0f;
     const float cardW       = 600.0f;
-    const float cardH       = 500.0f;
+    const float cardH       = 590.0f;
     const float contentW    = (float)width;
     const float contentH    = (float)height - TH;
     const float cardX       = (contentW - cardW) * 0.5f;
@@ -314,6 +323,183 @@ void RenderSettingsScreen(UIState& /*s*/)
     {
         const float timeouts[] = { 30.0f, 60.0f, 120.0f, 180.0f, -1.0f };
         autoLockTimeout = timeouts[autoLockIndex];
+        SETTINGS::Save(theme, autoLockIndex);  // persist the change immediately
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+
+    // ---- Encrypted backup ----
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 8);
+    RENDER::FieldLabel("ENCRYPTED BACKUP", fontSmall, theme);
+
+    ImGui::SetCursorPosX(5);
+    if (RENDER::GreenButton("  Export Backup  "))
+        FRAME::ExportBackup();
+    ImGui::SameLine();
+    if (RENDER::GreenButton("  Import Backup  "))
+        FRAME::ImportBackup();
+
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Separator,
+        THEME::TC(ImVec4(0.16f, 0.15f, 0.32f, 1.0f),
+                  ImVec4(0.80f, 0.76f, 0.68f, 1.0f), theme));
+    ImGui::Separator();
+    ImGui::PopStyleColor();
+
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 8);
+
+    // ---- Update checker (inline - logic lives in updater.cpp) ----
+    RENDER::FieldLabel("SOFTWARE UPDATES", fontSmall, theme);
+
+    auto upState = UPDATER::state.load(std::memory_order_acquire);
+
+    // Status line
+    if (upState == UPDATER::State::Checking)
+    {
+        // Animated marquee bar
+        ImVec2 barPos = ImGui::GetCursorScreenPos();
+        float  barW   = innerW;
+        float  barH   = 6.0f;
+        float  t      = fmodf((float)ImGui::GetTime() * 0.55f, 1.0f);
+        float  segW   = barW * 0.35f;
+        float  segX   = barPos.x + t * (barW + segW) - segW;
+
+        ImDrawList* dl2 = ImGui::GetWindowDrawList();
+        dl2->AddRectFilled(
+            barPos, ImVec2(barPos.x + barW, barPos.y + barH),
+            THEME::TCU(IM_COL32(40, 36, 80, 255), IM_COL32(200, 195, 185, 255), theme), 3.0f);
+        float x0 = std::max(barPos.x, segX);
+        float x1 = std::min(barPos.x + barW, segX + segW);
+        if (x1 > x0)
+        {
+            dl2->AddRectFilledMultiColor(
+                ImVec2(x0, barPos.y), ImVec2(x1, barPos.y + barH),
+                IM_COL32(108, 100, 220, 0),   IM_COL32(108, 100, 220, 255),
+                IM_COL32(108, 100, 220, 255), IM_COL32(108, 100, 220, 0));
+        }
+        ImGui::Dummy(ImVec2(barW, barH + 4.0f));
+
+        ImGui::PushFont(fontSmall);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.58f, 0.70f, 1.0f));
+        ImGui::SetCursorPosX(10);
+        ImGui::TextUnformatted("Checking for updates...");
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+    }
+    else if (upState == UPDATER::State::Available)
+    {
+        ImGui::PushFont(fontSmall);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.85f, 0.55f, 1.0f));
+        char avMsg[128];
+        snprintf(avMsg, sizeof(avMsg), "Update available: %s  (current: %s)",
+            UPDATER::latestVersion.c_str(), UPDATER::CURRENT_VERSION);
+        ImGui::SetCursorPosX(10);
+        ImGui::TextUnformatted(avMsg);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+    }
+    else if (upState == UPDATER::State::Downloading)
+    {
+        // Download progress bar
+        float prog = UPDATER::downloadProgress.load(std::memory_order_relaxed);
+
+        ImVec2 barPos = ImGui::GetCursorScreenPos();
+        float  barW   = innerW;
+        float  barH   = 6.0f;
+
+        ImDrawList* dl2 = ImGui::GetWindowDrawList();
+        // Track
+        dl2->AddRectFilled(
+            barPos, ImVec2(barPos.x + barW, barPos.y + barH),
+            THEME::TCU(IM_COL32(40, 36, 80, 255), IM_COL32(200, 195, 185, 255), theme), 3.0f);
+        // Fill
+        if (prog > 0.0f)
+            dl2->AddRectFilled(
+                barPos, ImVec2(barPos.x + barW * prog, barPos.y + barH),
+                IM_COL32(108, 100, 220, 255), 3.0f);
+        ImGui::Dummy(ImVec2(barW, barH + 4.0f));
+
+        ImGui::PushFont(fontSmall);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.58f, 0.70f, 1.0f));
+        char dlMsg[48];
+        snprintf(dlMsg, sizeof(dlMsg), "Downloading...  %.0f%%", prog * 100.0f);
+        ImGui::SetCursorPosX(10);
+        ImGui::TextUnformatted(dlMsg);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+    }
+    else if (upState == UPDATER::State::ReadyToApply)
+    {
+        ImGui::PushFont(fontSmall);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.85f, 0.55f, 1.0f));
+        char rdyMsg[64];
+        snprintf(rdyMsg, sizeof(rdyMsg), "%s downloaded. Ready to install.",
+            UPDATER::latestVersion.c_str());
+        ImGui::SetCursorPosX(10);
+        ImGui::TextUnformatted(rdyMsg);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+    }
+    else if (upState == UPDATER::State::UpToDate)
+    {
+        ImGui::PushFont(fontSmall);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.85f, 0.55f, 1.0f));
+        char utMsg[64];
+        snprintf(utMsg, sizeof(utMsg), "You're up to date!  (%s)", UPDATER::CURRENT_VERSION);
+        ImGui::SetCursorPosX(10);
+        ImGui::TextUnformatted(utMsg);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+    }
+    else if (upState == UPDATER::State::Error)
+    {
+        ImGui::PushFont(fontSmall);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
+        const char* errTxt = UPDATER::errorMessage.empty()
+            ? "Update check failed."
+            : UPDATER::errorMessage.c_str();
+        ImGui::SetCursorPosX(10);
+        ImGui::TextWrapped("%s", errTxt);
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+    }
+    else  // Idle - show current version
+    {
+        ImGui::PushFont(fontSmall);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.48f, 0.60f, 1.0f));
+        static const std::string verStr =
+            "Current version: " + std::string(UPDATER::CURRENT_VERSION);
+        ImGui::SetCursorPosX(10);
+        ImGui::TextUnformatted(verStr.c_str());
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+    }
+
+    // Action button row - changes depending on state
+    ImGui::SetCursorPosX(5);
+    if (upState == UPDATER::State::Available)
+    {
+        if (RENDER::GreenButton("  Download & Install  "))
+            UPDATER::StartDownload();
+    }
+    else if (upState == UPDATER::State::ReadyToApply)
+    {
+        if (RENDER::GreenButton("  Restart & Apply  "))
+        {
+            UPDATER::ApplyUpdate();
+            FRAME::shouldExit = true;
+        }
+    }
+    else if (upState != UPDATER::State::Downloading)
+    {
+        // Check for Updates - greyed out when already up to date or mid-check
+        bool disableBtn = (upState == UPDATER::State::UpToDate ||
+                           upState == UPDATER::State::Checking);
+        ImGui::BeginDisabled(disableBtn);
+        if (RENDER::PurpleButton("  Check for Updates  ", ImVec2(0, 0)))
+            UPDATER::StartCheck();
+        ImGui::EndDisabled();
     }
 
     // Go Back button

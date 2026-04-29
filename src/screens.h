@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // ============================================================
-//  screens.h  –  Full-screen overlay renderers
+//  screens.h  -  Full-screen overlay renderers
 // ============================================================
 
 #pragma once

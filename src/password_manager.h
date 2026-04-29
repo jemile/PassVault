@@ -16,11 +16,18 @@ struct PasswordEntry
     std::string title;      // Display name  (e.g. "Gmail")
     std::string website;    // URL           (e.g. "https://gmail.com")
     std::string username;   // Login / email
-    std::string password;   // Plaintext for now; ready for AES later
-    std::string category;   // "Personal" | "Work" | "Finance" | "Social" | "Other"
+    std::string password;   // Plaintext (vault file is encrypted at rest)
+    std::vector<std::string> tags;  // User-defined tags; replaces single category
     std::string notes;      // Freeform notes
     std::string createdAt;  // ISO-ish timestamp string
     std::string modifiedAt;
+
+    // ---- New fields ----
+    bool isFavorite = false;
+
+    // Previous passwords: each element is { timestamp, old_password }
+    // Capped at 10 entries (oldest is dropped when limit is reached).
+    std::vector<std::pair<std::string, std::string>> passwordHistory;
 };
 
 // ============================================================
@@ -35,20 +42,24 @@ public:
     PasswordManager();
 
     // Master password management
-    bool HasMasterPassword() const;             // true if master.auth exists on disk
-    bool SetupMasterPassword(const std::string& password);     // first-run: hash + store
-    bool UnlockWithMasterPassword(const std::string& password);// verify + load vault key
-    bool VerifyMasterPassword(const std::string& password) const; // verify only (re-lock)
+    bool HasMasterPassword() const;
+    bool SetupMasterPassword(const std::string& password);
+    bool UnlockWithMasterPassword(const std::string& password);
+    bool VerifyMasterPassword(const std::string& password) const;
 
-    // File I/O
+    // Encrypted vault file I/O
     bool LoadFromFile();
     bool SaveToFile();
 
     // CRUD
-    void AddEntry(PasswordEntry entry);           // assigns id + timestamps
-    void UpdateEntry(const PasswordEntry& entry); // matches on id
+    void AddEntry(PasswordEntry entry);             // assigns id + timestamps
+    void UpdateEntry(const PasswordEntry& entry);   // matches on id; auto-saves old password to history
     void RemoveEntry(const std::string& id);
     int  FindIndexById(const std::string& id) const;
+
+    // Encrypted backup (.pvbackup) - uses the vault's own key; no extra password needed
+    bool ExportBackup(const std::string& path) const;
+    bool ImportBackup(const std::string& path, bool merge);  // merge=true keeps existing entries
 
     // Utilities
     static std::string GenerateId();
@@ -66,11 +77,16 @@ public:
     static const char* PasswordStrengthLabel(int score);
 
 private:
-    // Escapes newlines and backslashes so values stay single-line in the file
+    // Single-line escaping for the encrypted vault file format
     static std::string EscapeValue(const std::string& val);
     static std::string UnescapeValue(const std::string& val);
 
-    std::vector<unsigned char> encryptionKey;   
+    // Shared JSON helpers used by ExportBackup
+    std::string BuildJsonExport() const;
+    // Shared JSON parser used by ImportBackup
+    bool ParseJsonStream(std::istream& stream, bool merge);
 
-    void LoadOrCreateEncryptionKey();           
+    std::vector<unsigned char> encryptionKey;
+
+    void LoadOrCreateEncryptionKey();
 };

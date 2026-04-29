@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // ============================================================
-//  render.cpp  –  Theme tables and reusable ImGui widget helpers
+//  render.cpp  -  Theme tables and reusable ImGui widget helpers
 // ============================================================
 
 #include "render.h"
@@ -209,6 +209,18 @@ void RENDER::FieldLabel(const char* txt, ImFont* font, int theme)
     ImGui::PopFont();
     ImGui::PopStyleColor();
 }
+
+void RENDER::DangerFieldLabel(const char* txt, ImFont* font, int theme)
+{
+    ImGui::PushStyleColor(ImGuiCol_Text, 
+        ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
+    ImGui::PushFont(font);
+    ImGui::SetCursorPosX(12);
+    ImGui::TextUnformatted(txt);
+    ImGui::PopFont();
+    ImGui::PopStyleColor();
+}
+
 
 bool RENDER::GreenButton(const char* label)
 {

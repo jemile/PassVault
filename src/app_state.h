@@ -3,17 +3,17 @@
 // SPDX-License-Identifier: MIT
 
 // ============================================================
-//  app_state.h  –  Shared application & UI state
+//  app_state.h  -  Shared application & UI state
 //
-//  Defines the AppState enum, entry category constants, and
-//  the UIState struct that holds every piece of mutable GUI
-//  state in one place.  A single global instance (g_ui) is
-//  defined in frame.cpp and declared extern here so every
-//  render translation unit can reach it.
+//  Defines the AppState enum and the UIState struct that holds
+//  every piece of mutable GUI state in one place.
+//  A single global instance (g_ui) is defined in frame.cpp
+//  and declared extern here so every render TU can reach it.
 // ============================================================
 
 #pragma once
 #include <string>
+#include <vector>
 #include "password_manager.h"
 
 
@@ -24,26 +24,19 @@ enum class AppState { Setup, Locked, Vault };
 
 
 // ============================================================
-//  Entry Categories  (shared constants)
-// ============================================================
-static const char* CATEGORIES[] = { "Personal", "Work", "Finance", "Social", "Other" };
-static const int   NUM_CATS     = 5;
-
-
-// ============================================================
-//  UIState  –  All mutable GUI state in one struct
+//  UIState  -  All mutable GUI state in one struct
 //
-//  Groupings mirror the logical sections of the application:
-//    App-level   - which screen is active, first-frame flag
-//    Vault       - the PasswordManager instance + init flag
-//    Lock screen - field visibility, error text, working flag,
-//                  activity timer, input buffers
-//    Edit form   - mode flags, category index, entry ID,
-//                  all text-field buffers
-//    Browsing    - selected entry index, confirm/show flags
-//    Filter      - active category index, search buffer
-//    Generator   - settings + preview buffer
-//    Toast       - message string + fade timer
+//  Groupings:
+//    App-level    - which screen is active, first-frame flag
+//    Vault        - PasswordManager instance + init flag
+//    Lock screen  - field visibility, error, working flag,
+//                   activity timer, input buffers
+//    Edit form    - mode flags, entry ID, all field buffers,
+//                   tag chips + new-tag input + palette pick
+//    Browsing     - selected index, popup flags
+//    Filter       - active tag string, favorites toggle, search
+//    Generator    - settings + preview buffer
+//    Toast        - message string + fade timer
 // ============================================================
 struct UIState
 {
@@ -67,7 +60,6 @@ struct UIState
     // ---- Entry edit form ----
     bool        editMode    = false;
     bool        isNewEntry  = false;
-    int         editCatIdx  = 0;
     std::string editingId   = "";
     char        editTitle[128]    = {};
     char        editWebsite[256]  = {};
@@ -75,15 +67,22 @@ struct UIState
     char        editPassword[256] = {};
     char        editNotes[2048]   = {};
 
+    // Tag editing (replaces old editCatIdx + CATEGORIES combo)
+    std::vector<std::string> editTags;   // tags for the currently-edited entry
+    char        newTagBuf[64]   = {};    // text field for typing a new tag name
+    int         newTagColorIdx  = 0;     // selected palette index (0-9) for new tag
+
     // ---- Vault browsing ----
     int         selectedIdx       = -1;
     bool        showDeleteConfirm = false;
     bool        showPassword      = false;
     bool        showGenPopup      = false;
+    bool        showHistoryPopup  = false;  // password-history modal
 
     // ---- Sidebar / search / filter ----
-    int         filterCatIdx  = -1;     // -1 = All
-    char        searchBuf[256] = {};
+    std::string filterTag       = "";    // active tag filter (empty = "All")
+    bool        filterFavorites = false; // when true only show starred entries
+    char        searchBuf[256]  = {};
 
     // ---- Password generator ----
     int         genLength  = 16;
@@ -99,5 +98,5 @@ struct UIState
 };
 
 
-// Single global instance – defined in frame.cpp
+// Single global instance - defined in frame.cpp
 extern UIState g_ui;

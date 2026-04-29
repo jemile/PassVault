@@ -28,4 +28,5 @@ namespace CRYPTO
     // DecryptKeyWithPassword: reverses the above; returns empty vector on failure
     std::vector<unsigned char> DecryptKeyWithPassword(const std::string& password,
         const std::vector<unsigned char>& data);
+
 }

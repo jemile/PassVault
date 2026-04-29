@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // ============================================================
-//  popups.h  –  Modal popup renderers
+//  popups.h  -  Modal popup renderers
 // ============================================================
 
 #pragma once
@@ -14,3 +14,6 @@ void RenderGenPopup(UIState& s);
 
 // Entry deletion confirmation modal
 void RenderDeleteConfirmPopup(UIState& s);
+
+// Password history modal (shows previous versions of an entry's password)
+void RenderHistoryPopup(UIState& s);

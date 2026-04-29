@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // ============================================================
-//  frame.h  –  Window state, font handles, and public entry points
+//  frame.h  -  Window state, font handles, and public entry points
 //
 //  Included by every render translation unit so they can reach
 //  FRAME:: display globals (width, height, theme, fonts, etc.)
@@ -18,7 +18,6 @@
 #include <ImGui/imgui.h>
 #include <ImGui/imgui_impl_glfw.h>
 #include <ImGui/imgui_impl_opengl3.h>
-
 
 namespace FRAME
 {
@@ -45,6 +44,7 @@ namespace FRAME
     extern ImFont*      font;           // regular  (~20 px)
     extern ImFont*      fontTitle;      // headings (~25 px)
     extern ImFont*      fontSmall;      // captions (~16 px)
+    extern ImFont*      fontTiny;       // small warnings (~12 px)
     extern ImFont*      sunMoonFontBig; // icons    (~32 px)
 
     // ============================================================
@@ -52,4 +52,7 @@ namespace FRAME
     // ============================================================
     void SetupFrame();
     void UnloadFrame();
+
+    void ExportBackup();
+    void ImportBackup();
 }

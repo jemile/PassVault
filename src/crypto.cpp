@@ -72,7 +72,7 @@ namespace CRYPTO
     std::string HashMasterPassword(const std::string& password)
     {
         // crypto_pwhash_str produces a null-terminated ASCII string that
-        // embeds the salt, algorithm id, and parameters – safe to store as-is.
+        // embeds the salt, algorithm id, and parameters - safe to store as-is.
         char hash[crypto_pwhash_STRBYTES] = {};
         if (crypto_pwhash_str(hash, password.c_str(), password.size(),
                 crypto_pwhash_OPSLIMIT_INTERACTIVE,
@@ -149,4 +149,5 @@ namespace CRYPTO
 
         return plain;
     }
+
 }

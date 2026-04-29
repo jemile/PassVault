@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // ============================================================
-//  panels.h  –  Vault content panel renderers
+//  panels.h  -  Vault content panel renderers
 // ============================================================
 
 #pragma once
