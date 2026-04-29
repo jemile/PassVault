@@ -2,43 +2,60 @@
 
 **A modern, lightweight, and fully offline password manager for Windows.**
 
-Built in C++ using Dear ImGui, GLFW, OpenGL, and libsodium. No cloud. No accounts. Your passwords stay on your machine.
+Built in C++ with Dear ImGui. No cloud. No accounts. No telemetry. Your data never leaves your machine.
 
-![PassVault Screenshot](screenshot.png)
+![PassVault Screenshot I](screenshot.png)
+![PassVault Screenshot II](screenshot2.png)
 
-### ✨ Features
-- Beautiful custom dark UI with drag-and-drop title bar
-- **Master password** protection with strong Argon2 key derivation
-- **Auto-lock** after inactivity (30s, 1m, 2m, 3m, or Never)
-- **Dark and Light mode** toggle
-- Dedicated **Settings tab** for all your preferences
-- Built-in password generator with live preview
-- Smart search + category filtering
-- Color-coded categories (Personal, Work, Finance, Social, Other)
-- Copy buttons + toast notifications
-- Fully resizable window
-- 100% local storage
+### ✨ Key Features
+
+- **Beautiful custom dark UI** with drag-and-drop title bar
+- **Strong AES-256 + XChaCha20 encryption** (libsodium)
+- **Built-in password generator** with real-time strength preview
+- **Smart search + filtering** by category or custom tags
+- **Custom tags** with fully customizable colors
+- **Star / Favorite** important logins
+- **Export / Import** encrypted vaults (secure backup & restore)
+- **Self-updating** — checks for new versions automatically
+- **Copy buttons** with toast notifications
+- Fully resizable + remembers window position
+- 100% local storage — vaults saved as `.pv` files
+
+### 🚀 Downloads
+
+- **[PassVault-v1.2.0-Setup.exe]** (Recommended)
+- **[PassVault-v1.2.0-Win64.zip]** (Portable)
 
 ### Tech Stack
+
 - C++17
-- Dear ImGui
+- Dear ImGui + custom renderer
 - GLFW + OpenGL 3.3
 - libsodium (crypto)
 - Embedded Hatten font
 
 ### Getting Started
-1. Clone the repository
-2. Open the solution in Visual Studio
-3. Build in Release or Debug mode
-4. Run `Password Manager.exe`
 
-Your encrypted vault is created automatically on first launch (just set your master password).
+1. Download and run the installer or portable version
+2. Create a new vault and set a **strong master password**
+3. Start adding your logins
+
+Your vault is automatically encrypted and saved locally.
+
+### Screenshots
+
+*(Add more screenshots here later)*
 
 ### License
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
-Third-party libraries are listed in [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt).
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+
+Third-party licenses are listed in [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt).
 
 ---
 
-Made with ❤️ in San Antonio, Texas.
+**Made with ❤️ in San Antonio, Texas.**
+
+---
+
+**Questions?** Feel free to open an issue on GitHub!
