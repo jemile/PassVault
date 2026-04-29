@@ -104,9 +104,9 @@ void RenderSidebar(const std::vector<int>& filtered, UIState& s)
     float filterCurX = 5.0f;
 
     // Advance cursor: SameLine or wrap to next row depending on button width
-    auto FilterAdvance = [&](const char* label) {
-        float btnW = ImGui::CalcTextSize(label).x
-                   + ImGui::GetStyle().FramePadding.x * 2.0f;
+    auto FilterAdvance = [&](const char* label) 
+    {
+        float btnW = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
         if (filterCurX > 5.0f) {
             if (filterCurX + 4.0f + btnW > W - 4.0f) {
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 8.0f);
@@ -122,13 +122,14 @@ void RenderSidebar(const std::vector<int>& filtered, UIState& s)
 
     // Render a single styled filter button (active/inactive colours + wrapping)
     auto FilterBtn = [&](const char* label, bool active,
-                         ImVec4 activeCol, ImVec4 inactiveTextCol) -> bool {
+                        ImVec4 activeCol, ImVec4 inactiveTextCol) -> bool 
+    {
         FilterAdvance(label);
         ImGui::PushStyleColor(ImGuiCol_Button, active
             ? ImVec4(activeCol.x * 0.6f, activeCol.y * 0.6f, activeCol.z * 0.6f, 1.0f)
             : THEME::TC(ImVec4(0.110f, 0.125f, 0.196f, 1.0f),
-                        ImVec4(0.858f, 0.842f, 0.808f, 1.0f), theme));
-        ImGui::PushStyleColor(ImGuiCol_Text, active ? ImVec4(1,1,1,1) : inactiveTextCol);
+                ImVec4(0.858f, 0.842f, 0.808f, 1.0f), theme));
+        ImGui::PushStyleColor(ImGuiCol_Text, active ? ImVec4(1, 1, 1, 1) : inactiveTextCol);
         bool clicked = ImGui::Button(label);
         ImGui::PopStyleColor(2);
         return clicked;
@@ -136,12 +137,12 @@ void RenderSidebar(const std::vector<int>& filtered, UIState& s)
 
     // "All" button
     if (FilterBtn("All",
-                  !s.filterFavorites && s.filterTag.empty(),
-                  ImVec4(0.390f, 0.366f, 0.780f, 1.0f),
-                  THEME::TC(ImVec4(0.65f, 0.70f, 0.80f, 1.0f),
-                             ImVec4(0.30f, 0.34f, 0.44f, 1.0f), theme)))
+        !s.filterFavorites && s.filterTag.empty(),
+        ImVec4(0.390f, 0.366f, 0.780f, 1.0f),
+        THEME::TC(ImVec4(0.65f, 0.70f, 0.80f, 1.0f),
+            ImVec4(0.30f, 0.34f, 0.44f, 1.0f), theme)))
     {
-        s.filterTag       = "";
+        s.filterTag = "";
         s.filterFavorites = false;
     }
 
@@ -165,16 +166,52 @@ void RenderSidebar(const std::vector<int>& filtered, UIState& s)
 
         for (size_t ti = 0; ti < allTags.size(); ++ti)
         {
-            const std::string& tag   = allTags[ti];
+            const std::string& tag = allTags[ti];
             bool               active = (!s.filterFavorites && s.filterTag == tag);
-            ImVec4             col   = SETTINGS::GetTagColor(tag);
+            ImVec4             col = SETTINGS::GetTagColor(tag);
 
             ImGui::PushID((int)(200 + ti));
+
             if (FilterBtn(tag.c_str(), active, col, col))
             {
-                s.filterTag       = (s.filterTag == tag) ? "" : tag;
+                s.filterTag = (s.filterTag == tag) ? "" : tag;
                 s.filterFavorites = false;
             }
+
+            ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 10.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18, 14));   // bigger outer padding
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(20, 12));    // bigger vertical padding on items
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));       // more space between items
+
+            // === RIGHT-CLICK DELETE FOR TAG ===
+            if (ImGui::BeginPopupContextItem())
+            {
+
+                ImGui::PushStyleColor(ImGuiCol_PopupBg, THEME::TC(
+                    ImVec4(0.082f, 0.090f, 0.137f, 1.0f),
+                    ImVec4(0.970f, 0.958f, 0.934f, 1.0f), theme));
+
+                ImGui::PushStyleColor(ImGuiCol_Header, THEME::TC(
+                    ImVec4(0.25f, 0.25f, 0.40f, 1.0f),      // dark mode hover
+                    ImVec4(0.70f, 0.70f, 0.85f, 1.0f), theme)); // light mode hover
+
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, THEME::TC(
+                    ImVec4(0.192f, 0.176f, 0.20f, 1.0f),
+                    ImVec4(0.192f, 0.176f, 0.20f, 1.0f), theme));
+
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.00f, 0.00f, 1.0f));
+
+                if (ImGui::MenuItem("\t\t(X) Delete Tag"))
+                {
+                    s.pendingDeleteTag = tag;
+                    s.showDeleteTagConfirm = true;
+                }
+
+                ImGui::PopStyleColor(4);
+                ImGui::EndPopup();
+            }
+            ImGui::PopStyleVar(4);
+
             ImGui::PopID();
         }
     }
@@ -207,42 +244,71 @@ void RenderSidebar(const std::vector<int>& filtered, UIState& s)
 
         for (int idx : filtered)
         {
-            const PasswordEntry& e        = s.pm.entries[idx];
-            bool                 selected = (idx == s.selectedIdx);
+            const PasswordEntry& e = s.pm.entries[idx];
+            bool selected = (idx == s.selectedIdx);
 
             ImGui::PushID(idx);
 
             ImVec2 screenPos = ImGui::GetCursorScreenPos();
-            float  itemH     = 56.0f;
+            float  itemH = 56.0f;
 
             // Invisible button for row selection
             if (ImGui::InvisibleButton("##item", ImVec2(W, itemH)))
             {
-                s.selectedIdx  = idx;
-                s.editMode     = false;
-                s.isNewEntry   = false;
+                s.selectedIdx = idx;
+                s.editMode = false;
+                s.isNewEntry = false;
                 s.showPassword = false;
             }
 
             bool hovered = ImGui::IsItemHovered();
 
+            ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 10.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18, 14));   // bigger outer padding
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(20, 12));    // bigger vertical padding on items
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 8));       // more space between items
+
+            if (ImGui::BeginPopupContextItem())
+            {
+                ImGui::PushStyleColor(ImGuiCol_PopupBg, THEME::TC(
+                    ImVec4(0.082f, 0.090f, 0.137f, 1.0f),
+                    ImVec4(0.970f, 0.958f, 0.934f, 1.0f), theme));
+
+                ImGui::PushStyleColor(ImGuiCol_Header, THEME::TC(
+                    ImVec4(0.25f, 0.25f, 0.40f, 1.0f),      // dark mode hover
+                    ImVec4(0.70f, 0.70f, 0.85f, 1.0f), theme)); // light mode hover
+
+                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, THEME::TC(
+                    ImVec4(0.192f, 0.176f, 0.20f, 1.0f),
+                    ImVec4(0.192f, 0.176f, 0.20f, 1.0f), theme));
+
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.00f, 0.00f, 1.0f));
+
+                if (ImGui::MenuItem("\t\t(X) Delete Login"))
+                {
+                    s.pendingDeleteIdx = idx;      // remember the exact row
+                    s.showDeleteConfirm = true;
+                }
+
+                ImGui::PopStyleColor(4);
+                ImGui::EndPopup();
+            }
+            ImGui::PopStyleVar(4);
+
             // Row background
             ImU32 bgCol;
-            if      (selected) bgCol = IM_COL32(60, 56, 122, 220);
+            if (selected) bgCol = IM_COL32(60, 56, 122, 220);
             else if (hovered)  bgCol = THEME::TCU(IM_COL32(28, 32, 50, 200), IM_COL32(210, 198, 178, 200), theme);
             else               bgCol = IM_COL32(0, 0, 0, 0);
 
-            dl->AddRectFilled(screenPos,
-                ImVec2(screenPos.x + W, screenPos.y + itemH), bgCol, 6.0f);
+            dl->AddRectFilled(screenPos, ImVec2(screenPos.x + W, screenPos.y + itemH), bgCol, 6.0f);
 
             // Tag colour dot (first tag's colour, or slate if no tags)
             ImVec4 dotColF = e.tags.empty()
                 ? ImVec4(0.58f, 0.63f, 0.73f, 1.0f)
                 : SETTINGS::GetTagColor(e.tags[0]);
             ImU32 dotCol = ImGui::ColorConvertFloat4ToU32(dotColF);
-            dl->AddCircleFilled(
-                ImVec2(screenPos.x + 16, screenPos.y + itemH * 0.40f),
-                5.0f, dotCol, 16);
+            dl->AddCircleFilled(ImVec2(screenPos.x + 16, screenPos.y + itemH * 0.40f), 5.0f, dotCol, 16);
 
             // Title
             ImVec4 titleCol = selected
@@ -272,19 +338,12 @@ void RenderSidebar(const std::vector<int>& filtered, UIState& s)
             // Favorite star (right edge, gold if starred)
             if (e.isFavorite)
             {
-                DrawFilledStar(dl,
-                    screenPos.x + W - 16.0f,
-                    screenPos.y + itemH * 0.40f,
-                    6.0f,
-                    IM_COL32(255, 210, 50, 220));
+                DrawFilledStar(dl, screenPos.x + W - 16.0f, screenPos.y + itemH * 0.40f, 6.0f, IM_COL32(255, 210, 50, 220));
             }
             else if (hovered || selected)
             {
                 // Show dim outline star on hover/select
-                DrawFilledStar(dl,
-                    screenPos.x + W - 16.0f,
-                    screenPos.y + itemH * 0.40f,
-                    6.0f,
+                DrawFilledStar(dl, screenPos.x + W - 16.0f, screenPos.y + itemH * 0.40f, 6.0f,
                     THEME::TCU(IM_COL32(80, 90, 110, 140), IM_COL32(160, 155, 145, 140), theme));
             }
 
@@ -298,7 +357,6 @@ void RenderSidebar(const std::vector<int>& filtered, UIState& s)
             }
             ImGui::PopID();
 
-            // Advance cursor past item
             ImGui::SetCursorScreenPos(ImVec2(screenPos.x, screenPos.y + itemH + 3));
             ImGui::PopID();
         }
@@ -469,7 +527,7 @@ void RenderDetailPanel(UIState& s)
                     (int)(tCol.x * 120), (int)(tCol.y * 120), (int)(tCol.z * 120), 200);
 
                 float labelW = ImGui::CalcTextSize(tag.c_str()).x;
-                float chipW  = labelW + chipPadX * 2 + 14.0f;  // +14 for × button
+                float chipW  = labelW + chipPadX * 2 + 14.0f;  // +14 for x button
 
                 // Wrap to next row if needed
                 if (curX + chipW - chipStartX > maxChipRowW && curX > chipStartX)
@@ -494,7 +552,7 @@ void RenderDetailPanel(UIState& s)
                     IM_COL32(255, 255, 255, 240),
                     tag.c_str());
 
-                // × remove button (invisible button over the right side of the chip)
+                // x remove button (invisible button over the right side of the chip)
                 ImGui::SetCursorScreenPos(ImVec2(curX + labelW + chipPadX + 1, curY + 1));
                 ImGui::PushID((int)(500 + ti));
                 if (ImGui::InvisibleButton("##xtag", ImVec2(14.0f, chipH - 2.0f)))
@@ -505,7 +563,7 @@ void RenderDetailPanel(UIState& s)
                 }
                 ImGui::PopID();
 
-                // Draw × symbol
+                // Draw x symbol
                 float xCx = curX + labelW + chipPadX + 7.0f;
                 float xCy = curY + chipH * 0.5f;
                 dlTags->AddLine(ImVec2(xCx - 3, xCy - 3), ImVec2(xCx + 3, xCy + 3), IM_COL32(255,255,255,200), 1.4f);
@@ -547,7 +605,6 @@ void RenderDetailPanel(UIState& s)
             memset(s.newTagBuf, 0, sizeof(s.newTagBuf));
         }
 
-        // ---- Existing tag picker (click to add) ----
         {
             // Collect all known tags not already applied to this entry
             std::vector<std::string> available;
@@ -570,21 +627,38 @@ void RenderDetailPanel(UIState& s)
                 ImGui::PopStyleColor();
                 ImGui::PopFont();
 
+                // -- Rebuild available tags EVERY frame (this fixes the stale list) --
+                std::vector<std::string> available;
+                for (const auto& e : s.pm.entries)
+                {
+                    for (const auto& t : e.tags)
+                    {
+                        // Only show tags that are NOT already in the current entry being edited
+                        if (std::find(s.editTags.begin(), s.editTags.end(), t) == s.editTags.end() &&
+                            std::find(available.begin(), available.end(), t) == available.end())
+                        {
+                            available.push_back(t);
+                        }
+                    }
+                }
+
                 float existCurX = 2.0f;
                 ImGui::SetCursorPosX(2.0f);
+
                 for (size_t ai = 0; ai < available.size(); ++ai)
                 {
-                    const std::string& tag  = available[ai];
-                    ImVec4             col  = SETTINGS::GetTagColor(tag);
+                    const std::string& tag = available[ai];
+                    ImVec4             col = SETTINGS::GetTagColor(tag);
                     float              btnW = ImGui::CalcTextSize(tag.c_str()).x
-                                           + ImGui::GetStyle().FramePadding.x * 2.0f;
+                        + ImGui::GetStyle().FramePadding.x * 2.0f;
 
                     if (existCurX > 2.0f) {
                         if (existCurX + 4.0f + btnW > pwW - 4.0f) {
                             ImGui::NewLine();
                             ImGui::SetCursorPosX(2.0f);
                             existCurX = 2.0f;
-                        } else {
+                        }
+                        else {
                             ImGui::SameLine(0, 4);
                             existCurX += 4.0f;
                         }
@@ -594,13 +668,15 @@ void RenderDetailPanel(UIState& s)
                     ImGui::PushID((int)(800 + ai));
                     ImGui::PushStyleColor(ImGuiCol_Button,
                         THEME::TC(ImVec4(0.095f, 0.110f, 0.175f, 1.0f),
-                                  ImVec4(0.848f, 0.832f, 0.798f, 1.0f), theme));
+                            ImVec4(0.848f, 0.832f, 0.798f, 1.0f), theme));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                         THEME::TC(ImVec4(0.130f, 0.148f, 0.235f, 1.0f),
-                                  ImVec4(0.800f, 0.782f, 0.748f, 1.0f), theme));
+                            ImVec4(0.800f, 0.782f, 0.748f, 1.0f), theme));
                     ImGui::PushStyleColor(ImGuiCol_Text, col);
+
                     if (ImGui::Button(tag.c_str()))
                         s.editTags.push_back(tag);
+
                     ImGui::PopStyleColor(3);
                     ImGui::PopID();
                 }

@@ -815,3 +815,24 @@ bool PasswordManager::VerifyMasterPassword(const std::string& password) const
     std::string hash(std::istreambuf_iterator<char>(f), {});
     return CRYPTO::VerifyMasterPassword(password, hash);
 }
+
+void PasswordManager::RemoveTag(const std::string& tag)
+{
+    if (tag.empty()) return;
+
+    bool changed = false;
+
+    for (auto& entry : entries)
+    {
+        // Remove all occurrences of the tag
+        auto newEnd = std::remove(entry.tags.begin(), entry.tags.end(), tag);
+        if (newEnd != entry.tags.end())
+        {
+            entry.tags.erase(newEnd, entry.tags.end());
+            changed = true;
+        }
+    }
+
+    if (changed)
+        SaveToFile();
+}

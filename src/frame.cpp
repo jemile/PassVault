@@ -370,6 +370,11 @@ static void RenderTitleBar()
     // File menu
     if (ImGui::Button(" File ", ImVec2(65, 0)))
         ImGui::OpenPopup("FilePopup");
+
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 10.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 10));   
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 6));    
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));       
     if (ImGui::BeginPopup("FilePopup"))
     {
         if (ImGui::MenuItem("New Entry", "Ctrl+N"))
@@ -393,11 +398,19 @@ static void RenderTitleBar()
         ImGui::EndPopup();
     }
 
+    ImGui::PopStyleVar(4);
+
     ImGui::SameLine();
 
     // View menu
     if (ImGui::Button(" View ", ImVec2(65, 0)))
         ImGui::OpenPopup("ViewPopup");
+
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 10.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 10));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
+
     if (ImGui::BeginPopup("ViewPopup"))
     {
         if (ImGui::MenuItem("Clear Search"))        memset(g_ui.searchBuf, 0, sizeof(g_ui.searchBuf));
@@ -405,11 +418,19 @@ static void RenderTitleBar()
         ImGui::EndPopup();
     }
 
+    ImGui::PopStyleVar(4);
+
     ImGui::SameLine();
 
     // About menu
     if (ImGui::Button(" About ", ImVec2(65, 0)))
         ImGui::OpenPopup("AboutPopup");
+
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 10.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 10));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
+
     if (ImGui::BeginPopup("AboutPopup"))
     {
         static const std::string verionText =
@@ -427,7 +448,7 @@ static void RenderTitleBar()
         ImGui::EndPopup();
     }
 
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(5);
     ImGui::PopStyleColor(4);
 
     // Drag zone (covers title bar minus right-side buttons)
@@ -676,6 +697,7 @@ static void WindowDevelopment()
 
     // Modals
     RenderDeleteConfirmPopup(g_ui);
+    RenderDeleteTagConfirmPopup(g_ui);
     RenderGenPopup(g_ui);
     RenderHistoryPopup(g_ui);
 }

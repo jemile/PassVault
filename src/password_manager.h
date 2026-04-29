@@ -76,6 +76,9 @@ public:
     static int         PasswordStrength(const std::string& pwd);
     static const char* PasswordStrengthLabel(int score);
 
+    // Removes a tag from ALL entries that have it and saves the vault
+    void RemoveTag(const std::string& tag);
+
 private:
     // Single-line escaping for the encrypted vault file format
     static std::string EscapeValue(const std::string& val);

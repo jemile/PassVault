@@ -238,7 +238,7 @@ void RenderHistoryPopup(UIState& s)
 
 
 // ============================================================
-//  RenderDeleteConfirmPopup  -  Entry deletion confirmation modal
+//  RenderDeleteConfirmPopup  -  Entry deletion confirmation modal for entries
 // ============================================================
 void RenderDeleteConfirmPopup(UIState& s)
 {
@@ -265,10 +265,17 @@ void RenderDeleteConfirmPopup(UIState& s)
         ImGui::PopFont();
         ImGui::Spacing();
 
-        if (s.selectedIdx >= 0 && s.selectedIdx < (int)s.pm.entries.size())
+        // === SMART INDEX: use right-click first, otherwise fall back to selected ===
+        int deleteIdx = s.pendingDeleteIdx >= 0 ? s.pendingDeleteIdx : s.selectedIdx;
+
+        if (deleteIdx >= 0 && deleteIdx < (int)s.pm.entries.size())
         {
             ImGui::TextWrapped("Are you sure you want to delete \"%s\"? This cannot be undone.",
-                s.pm.entries[s.selectedIdx].title.c_str());
+                s.pm.entries[deleteIdx].title.c_str());
+        }
+        else
+        {
+            ImGui::TextWrapped("No entry selected.");
         }
 
         ImGui::Spacing();
@@ -277,12 +284,19 @@ void RenderDeleteConfirmPopup(UIState& s)
 
         if (RENDER::RedButton("  Yes, Delete  "))
         {
-            if (s.selectedIdx >= 0 && s.selectedIdx < (int)s.pm.entries.size())
-                s.pm.RemoveEntry(s.pm.entries[s.selectedIdx].id);
+            if (deleteIdx >= 0 && deleteIdx < (int)s.pm.entries.size())
+            {
+                s.pm.RemoveEntry(s.pm.entries[deleteIdx].id);
 
-            s.selectedIdx       = -1;
-            s.editMode          = false;
-            s.isNewEntry        = false;
+                // Fix selection if needed
+                if (s.selectedIdx == deleteIdx)
+                    s.selectedIdx = -1;
+                else if (s.selectedIdx > deleteIdx)
+                    s.selectedIdx--;
+
+                s.pendingDeleteIdx = -1;   // reset
+            }
+
             s.showDeleteConfirm = false;
             RENDER::ShowToast("Entry deleted.", s.toastMsg, s.toastTimer);
             ImGui::CloseCurrentPopup();
@@ -290,7 +304,69 @@ void RenderDeleteConfirmPopup(UIState& s)
         ImGui::SameLine();
         if (ImGui::Button("  Cancel  "))
         {
+            s.pendingDeleteIdx = -1;
             s.showDeleteConfirm = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+    ImGui::PopStyleColor();
+}
+
+
+// ============================================================
+//  RenderDeleteTagConfirmPopup  -  Entry deletion confirmation modal for tags
+// ============================================================
+void RenderDeleteTagConfirmPopup(UIState& s)
+{
+    using namespace FRAME;
+
+    if (!s.showDeleteTagConfirm) return;
+
+    ImGui::OpenPopup("Confirm Delete Tag");
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(360, 220));
+
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, THEME::TC(
+        ImVec4(0.082f, 0.090f, 0.137f, 1.0f),
+        ImVec4(0.970f, 0.958f, 0.934f, 1.0f), theme));
+
+    if (ImGui::BeginPopupModal("Confirm Delete Tag", &s.showDeleteTagConfirm,
+        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
+    {
+        ImGui::Spacing();
+        ImGui::PushFont(fontTitle);
+        ImGui::TextColored(ImVec4(0.96f, 0.30f, 0.30f, 1.0f), "Delete Tag?");
+        ImGui::PopFont();
+        ImGui::Spacing();
+
+        ImGui::TextWrapped("Are you sure you want to delete the tag \"%s\"?\n\n"
+            "It will be removed from all entries.", s.pendingDeleteTag.c_str());
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (RENDER::RedButton("  Yes, Delete Tag  "))
+        {
+            if (!s.pendingDeleteTag.empty())
+            {
+                s.pm.RemoveTag(s.pendingDeleteTag); 
+                RENDER::ShowToast("Tag deleted.", s.toastMsg, s.toastTimer);
+            }
+
+            s.pendingDeleteTag = "";
+            s.showDeleteTagConfirm = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("  Cancel  "))
+        {
+            s.pendingDeleteTag = "";
+            s.showDeleteTagConfirm = false;
             ImGui::CloseCurrentPopup();
         }
 

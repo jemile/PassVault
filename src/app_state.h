@@ -73,16 +73,19 @@ struct UIState
     int         newTagColorIdx  = 0;     // selected palette index (0-9) for new tag
 
     // ---- Vault browsing ----
-    int         selectedIdx       = -1;
+	int         selectedIdx      = -1; // currently selected entry in the sidebar list
+    int         pendingDeleteIdx =  -1; // right click delete
     bool        showDeleteConfirm = false;
     bool        showPassword      = false;
     bool        showGenPopup      = false;
     bool        showHistoryPopup  = false;  // password-history modal
 
     // ---- Sidebar / search / filter ----
-    std::string filterTag       = "";    // active tag filter (empty = "All")
-    bool        filterFavorites = false; // when true only show starred entries
-    char        searchBuf[256]  = {};
+    std::string filterTag            = "";    // active tag filter (empty = "All")
+    bool        filterFavorites      = false; // when true only show starred entries
+    char        searchBuf[256]       = {};
+    std::string pendingDeleteTag     = "";
+    bool        showDeleteTagConfirm = false;
 
     // ---- Password generator ----
     int         genLength  = 16;
