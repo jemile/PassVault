@@ -21,13 +21,13 @@ Built in C++ with Dear ImGui. No cloud. No accounts. No telemetry. Your data nev
 - Fully resizable + remembers window position
 - 100% local storage — vaults saved as `.pv` files
 
-### 🚀 Downloads (v1.2.0)
+### 🚀 Downloads (v1.3.0)
 
-- **[PassVault-v1.2.0-Setup.exe]** (Recommended - Installer)  
-  [Download](https://github.com/jemile/PassVault/releases/download/v1.2.0/PassVault-v1.2.0-Setup.exe)
+- **[PassVault-v1.3.0-Setup.exe]** (Recommended - Installer)  
+  [Download](https://github.com/jemile/PassVault/releases/download/v1.3.0/PassVault-v1.3.0-Setup.exe)
 
-- **[PassVault-v1.2.0-Win64.zip]** (Portable)  
-  [Download](https://github.com/jemile/PassVault/releases/download/v1.2.0/PassVault-v1.2.0-Win64.zip)
+- **[PassVault-v1.3.0-Win64.zip]** (Portable)  
+  [Download](https://github.com/jemile/PassVault/releases/download/v1.3.0/PassVault-v1.3.0-Win64.zip)
 
 **System Requirements:**
 - Windows 10 or 11 (64-bit)
@@ -42,6 +42,7 @@ Built in C++ with Dear ImGui. No cloud. No accounts. No telemetry. Your data nev
 - GLFW + OpenGL 3.3
 - libsodium (crypto)
 - Embedded Hatten font
+- Embedded Sun and Moon font
 
 ### Getting Started
 
