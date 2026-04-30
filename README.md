@@ -10,7 +10,8 @@ Built in C++ with Dear ImGui. No cloud. No accounts. No telemetry. Your data nev
 ### ✨ Key Features
 
 - **Beautiful custom dark UI** with drag-and-drop title bar
-- **Strong AES-256 + XChaCha20 encryption** (libsodium)
+- **Strong XSalsa20-Poly1305 authenticated encryption** (libsodium crypto_secretbox)
+- **Master password uses Argon2id key derivation** (libsodium)
 - **Built-in password generator** with real-time strength preview
 - **Smart search + filtering** by category or custom tags
 - **Custom tags** with fully customizable colors
