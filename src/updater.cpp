@@ -23,7 +23,7 @@
 #pragma comment(lib, "wininet.lib")
 
 namespace UPDATER {
-    // ── Storage ────────────────────────────────────────────────────
+    // Storage
     std::atomic<State> state { State::Idle };
     std::string        latestVersion;
     std::string        downloadUrl;
@@ -35,7 +35,9 @@ namespace UPDATER {
     static const char* const USER_AGENT = "User-Agent: PassVault/1.1\r\n";
     static const DWORD       USER_AGENT_LEN = sizeof("User-Agent: PassVault/1.1\r\n") - 1;
 
-    // ── HTTP ───────────────────────────────────────────────────────
+    // ============================================================
+    // HTTP 
+    // ============================================================
     static std::string FetchUrl(const std::string& url)
     {
         std::string result;
@@ -64,8 +66,9 @@ namespace UPDATER {
         return result;
     }
 
-
-    // ── JSON helper ────────────────────────────────────────────────
+    // ============================================================
+    // JSON helper
+    // ============================================================
     static std::string JsonString(const std::string& json, const char* key)
     {
         std::string needle = std::string("\"") + key + "\"";
@@ -84,7 +87,9 @@ namespace UPDATER {
         return "PassVault-" + latestVersion + "-Win64.exe";
     }
 
-    // ── Version comparison ─────────────────────────────────────────
+    // ============================================================
+    // Version comparison 
+    // ============================================================
     static bool ParseVersion(const std::string& v, int& maj, int& min, int& pat)
     {
         const char* s = v.c_str();
@@ -102,8 +107,9 @@ namespace UPDATER {
         return npat > cpat;
     }
 
-
-    // ── Background worker ──────────────────────────────────────────
+    // ============================================================
+    // Background worker 
+    // ============================================================
     static void CheckThread()
     {
         std::string json = FetchUrl(RELEASES_API);
@@ -147,15 +153,14 @@ namespace UPDATER {
         downloadUrl   = url.empty() ? RELEASES_PAGE : url;
         errorMessage.clear();
 
-        std::atomic_thread_fence(std::memory_order_seq_cst);
-
         state.store(
             IsNewer(tag, CURRENT_VERSION) ? State::Available : State::UpToDate,
             std::memory_order_release);
     }
 
-
-    // ── Strip trailing backslashes from a path ────────────────────
+    // ============================================================
+    // Strip trailing backslashes from a path
+    // ============================================================
     static std::string StripSlash(std::string p)
     {
         while (!p.empty() && (p.back() == '\\' || p.back() == '/'))
@@ -164,9 +169,11 @@ namespace UPDATER {
     }
 
 
-    // ── Binary file download with progress ────────────────────────
+    // ============================================================
+    // Binary file download with progress
     // GitHub release assets redirect to objects.githubusercontent.com;
     // INTERNET_FLAG_RELOAD + no cache ensures we follow the redirect.
+   // ============================================================
     static bool DownloadToFile(const std::string& url, const std::string& outPath)
     {
         HINTERNET hSession = InternetOpenA("PassVault/1.1",
@@ -225,10 +232,11 @@ namespace UPDATER {
         return true;
     }
 
-
-    // ── Zip extraction via a temp .ps1 script ─────────────────────
+    // ============================================================
+    // Zip extraction via a temp .ps1 script
     // Writing a .ps1 file avoids all command-line escaping issues.
     // $ErrorActionPreference = 'Stop' ensures a non-zero exit on failure.
+    // ============================================================
     static bool ExtractZip(const std::string& zipPath, const std::string& destDir)
     {
         std::string dest = StripSlash(destDir);
@@ -281,7 +289,9 @@ namespace UPDATER {
     }
 
 
-    // ── Write + launch the self-deleting updater batch script ─────
+    // ============================================================
+    // Write + launch the self-deleting updater batch script
+    // ============================================================
     static bool LaunchUpdaterScript(const std::string& srcDir,
                                     const std::string& curExePath)
     {
@@ -328,8 +338,9 @@ namespace UPDATER {
         return true;
     }
 
-
-    // ── Download + extract thread ──────────────────────────────────
+    // ============================================================
+    // Download + extract thread
+    // ============================================================
     static void DownloadThread()
     {
         downloadProgress.store(0.0f, std::memory_order_relaxed);
@@ -366,12 +377,12 @@ namespace UPDATER {
 
         DeleteFileA(zipPath.c_str());  // zip no longer needed
 
-        std::atomic_thread_fence(std::memory_order_seq_cst);
         state.store(State::ReadyToApply, std::memory_order_release);
     }
 
-
-    // ── Public API ─────────────────────────────────────────────────
+    // ============================================================
+    // Public API
+    // ============================================================
     void StartCheck()
     {
         if (state.load() == State::Checking) return;

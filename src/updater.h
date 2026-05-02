@@ -17,7 +17,7 @@
 
 namespace UPDATER {
 
-    constexpr const char* CURRENT_VERSION = "v1.2.0";
+    constexpr const char* CURRENT_VERSION = "v1.4.0";
     constexpr const char* RELEASES_API    =
         "https://api.github.com/repos/jemile/PassVault/releases/latest";
     constexpr const char* RELEASES_PAGE   =

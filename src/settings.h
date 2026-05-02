@@ -7,7 +7,7 @@
 //
 //  Provides:
 //    • A 10-swatch palette for tag colours
-//    • A tag-name → palette-index registry  (saved to disk)
+//    • A tag-name -> palette-index registry  (saved to disk)
 //    • Load() / Save() for data/settings.ini
 //
 //  Callers receive saved theme / autolock values through the
@@ -27,13 +27,10 @@ namespace SETTINGS
     //  Format: { R, G, B, A } floats
     // --------------------------------------------------------
     extern const float TAG_PALETTE[10][4];
-    static const int   TAG_PALETTE_SIZE = 10;
-
-    // Swatch names shown in the colour picker UI
-    extern const char* TAG_PALETTE_NAMES[10];
+    static constexpr int TAG_PALETTE_SIZE = 10;
 
     // --------------------------------------------------------
-    //  Tag name → palette index  (persisted via settings.ini)
+    //  Tag name -> palette index  (persisted via settings.ini)
     //  Default entries cover the legacy category names.
     // --------------------------------------------------------
     extern std::map<std::string, int> tagColorMap;
@@ -48,12 +45,14 @@ namespace SETTINGS
     // --------------------------------------------------------
     //  Values populated by Load() and consumed by frame.cpp
     // --------------------------------------------------------
-    extern int savedTheme;        // 0 = dark, 1 = light
-    extern int savedAutoLockIdx;  // 0-4 matching the combo options
+    extern int   savedTheme;          // 0 = dark, 1 = light
+    extern int   savedAutoLockIdx;    // 0-4 matching the combo options
+    extern bool  savedToastsEnabled;  // show toast notifications
+    extern float savedToastDuration;  // seconds each toast stays visible (2–8)
 
     // --------------------------------------------------------
     //  Persistence  (uses ./data/settings.ini)
     // --------------------------------------------------------
-    void Load();                            // reads file → sets savedTheme, savedAutoLockIdx, tagColorMap
-    void Save(int theme, int autoLockIdx);  // writes file with current state
+    void Load();
+    void Save(int theme, int autoLockIdx, bool toastsEnabled, float toastDuration);
 }

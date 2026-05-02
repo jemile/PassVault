@@ -27,7 +27,6 @@ namespace FRAME
     extern int          width;
     extern int          height;
     extern int          theme;
-    extern int          filterTheme;    // -1 forces theme apply on first frame
     extern bool         shouldExit;
     extern bool         settingsTab;
 
@@ -44,8 +43,11 @@ namespace FRAME
     extern ImFont*      font;           // regular  (~20 px)
     extern ImFont*      fontTitle;      // headings (~25 px)
     extern ImFont*      fontSmall;      // captions (~16 px)
-    extern ImFont*      fontTiny;       // small warnings (~12 px)
     extern ImFont*      sunMoonFontBig; // icons    (~32 px)
+
+    // App icon loaded as an OpenGL texture at startup (0 if load failed)
+    extern GLuint       logoTexture;
+    extern int          logoTexSize;
 
     // ============================================================
     //  Public Entry Points

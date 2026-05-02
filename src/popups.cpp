@@ -24,7 +24,7 @@ void RenderGenPopup(UIState& s)
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(420, 300));
+    ImGui::SetNextWindowSize(ImVec2(420, 375));
 
     ImGui::PushStyleColor(ImGuiCol_PopupBg, THEME::TC(
         ImVec4(0.082f, 0.090f, 0.137f, 1.0f),
@@ -34,7 +34,10 @@ void RenderGenPopup(UIState& s)
         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove))
     {
         ImGui::PushFont(fontTitle);
-        ImGui::TextColored(ImVec4(0.66f, 0.62f, 1.0f, 1.0f), "Password Generator");
+        ImGui::TextColored(THEME::TC(
+            ImVec4(0.6588f, 0.6196f, 1.0000f, 1.0f),  // 168,158,255
+            ImVec4(0.1176f, 0.3922f, 0.7843f, 1.0f),  // 30,100,200
+            theme), "Password Generator");
         ImGui::PopFont();
         ImGui::Separator();
         ImGui::Spacing();
@@ -191,16 +194,10 @@ void RenderHistoryPopup(UIState& s)
                 ImGui::PopStyleColor();
 
 
-                //ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-                //if (ImGui::Button(s.showPassword ? " Hide " : " Show "))
-                //    s.showPassword = !s.showPassword;
-                //ImGui::PopStyleColor();
-                //ImGui::SameLine(0, 6);
-
                 ImGui::SameLine(0, 6);
                 char cpyId[24];
                 snprintf(cpyId, sizeof(cpyId), "cphist%d", i);
-                RENDER::CopyButton(cpyId, h.second.c_str(), theme, s.toastMsg, s.toastTimer);
+                RENDER::CopyButton(cpyId, h.second.c_str(), theme, s.toasts);
 
                 ImGui::Spacing();
                 ImGui::PopID();
@@ -298,7 +295,7 @@ void RenderDeleteConfirmPopup(UIState& s)
             }
 
             s.showDeleteConfirm = false;
-            RENDER::ShowToast("Entry deleted.", s.toastMsg, s.toastTimer);
+            RENDER::ShowToast("Entry deleted.", s.toasts);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -355,7 +352,7 @@ void RenderDeleteTagConfirmPopup(UIState& s)
             if (!s.pendingDeleteTag.empty())
             {
                 s.pm.RemoveTag(s.pendingDeleteTag); 
-                RENDER::ShowToast("Tag deleted.", s.toastMsg, s.toastTimer);
+                RENDER::ShowToast("Tag deleted.", s.toasts);
             }
 
             s.pendingDeleteTag = "";

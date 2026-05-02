@@ -65,7 +65,6 @@ namespace CRYPTO
 
         return std::string(plaintext.begin(), plaintext.end());
     }
-
     // ============================================================
     //  Master password  (Argon2id)
     // ============================================================

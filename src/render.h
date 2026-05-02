@@ -12,8 +12,10 @@
 
 #pragma once
 #include <string>
+#include <vector>
 #include "ImGui/imgui.h"
 #include "password_manager.h"
+#include "toast.h"
 
 
 namespace THEME
@@ -61,8 +63,22 @@ namespace CONVERSIONS
 
 namespace RENDER
 {
-    // Show a timed toast message in the title bar
-    void ShowToast(const char* msg, char toastMsg[128], float& toastTimer);
+    // Synced from UIState each frame by frame.cpp.
+    // ShowToast reads these so callers never need to pass them.
+    extern bool  g_toastsEnabled;
+    extern float g_toastDuration;
+    extern int   g_theme;          // 0 = dark, 1 = light
+
+    // Push a timed toast onto the stack.  type defaults to Success (green).
+    // No-op when g_toastsEnabled is false.
+    void ShowToast(const char* msg,
+                   std::vector<ToastEntry>& toasts,
+                   ToastType type = ToastType::Success);
+
+    // Draw all live toasts bottom-right of the current ImGui window.
+    // Call once per frame from inside the main window, just before ImGui::End().
+    // fontSmall is used for message text; pass nullptr to use the default font.
+    void RenderToasts(std::vector<ToastEntry>& toasts, float dt, ImFont* fontSmall);
 
     // Horizontally center the next item using the given label width
     void CenterSpacing(const char* label);
@@ -75,12 +91,12 @@ namespace RENDER
 
     // Accent-coloured push buttons
     bool GreenButton (const char* label);
-    bool PurpleButton(const char* label, const ImVec2& size_arg);
+    bool ThemeButton(const char* label, const ImVec2& size_arg);
     bool RedButton   (const char* label);
 
     // Clipboard copy button with built-in toast feedback
     bool CopyButton(const char* id, const char* textToCopy, int theme,
-                    char toastMsg[128], float& toastTimer);
+                    std::vector<ToastEntry>& toasts);
 
     // Inline password-strength progress bar + label
     void DrawStrengthBar(const char* pwd, ImFont* font, int theme);

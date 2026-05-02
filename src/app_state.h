@@ -15,13 +15,13 @@
 #include <string>
 #include <vector>
 #include "password_manager.h"
+#include "toast.h"
 
 
 // ============================================================
 //  Application-Level State Enum
 // ============================================================
 enum class AppState { Setup, Locked, Vault };
-
 
 // ============================================================
 //  UIState  -  All mutable GUI state in one struct
@@ -60,7 +60,7 @@ struct UIState
     // ---- Entry edit form ----
     bool        editMode    = false;
     bool        isNewEntry  = false;
-    std::string editingId   = "";
+    std::string editingId;
     char        editTitle[128]    = {};
     char        editWebsite[256]  = {};
     char        editUsername[256] = {};
@@ -81,10 +81,11 @@ struct UIState
     bool        showHistoryPopup  = false;  // password-history modal
 
     // ---- Sidebar / search / filter ----
-    std::string filterTag            = "";    // active tag filter (empty = "All")
+    std::string filterTag;                    // active tag filter (empty = "All")
+    std::string filterFolder;                 // active folder filter (empty = no folder filter)
     bool        filterFavorites      = false; // when true only show starred entries
     char        searchBuf[256]       = {};
-    std::string pendingDeleteTag     = "";
+    std::string pendingDeleteTag;
     bool        showDeleteTagConfirm = false;
 
     // ---- Password generator ----
@@ -95,9 +96,25 @@ struct UIState
     bool        genSymbols = true;
     char        genPreview[256] = {};
 
-    // ---- Toast notification ----
-    char        toastMsg[128] = {};
-    float       toastTimer    = 0.0f;
+    // ---- Toast notifications (bottom-right stack) ----
+    std::vector<ToastEntry> toasts;
+    bool  toastsEnabled  = true;
+    float toastDuration  = 4.0f;   // seconds each toast is shown (2–8)
+
+    // ---- Entry edit form - folder ----
+    char  editFolderBuf[64]  = {};
+
+    // ---- Create-folder inline input (sidebar footer) ----
+    bool  showNewFolderInput = false;
+    char  newFolderBuf[64]   = {};
+
+    // ---- Change master password (settings screen) ----
+    char  changePwCurrent[256]  = {};
+    char  changePwNew[256]      = {};
+    char  changePwConfirm[256]  = {};
+    bool  changePwShowCurrent   = false;
+    bool  changePwShowNew       = false;
+    bool  changePwShowConfirm   = false;
 };
 
 

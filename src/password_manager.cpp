@@ -4,6 +4,7 @@
 
 // ============================================================
 //  password_manager.cpp  -  Vault serialization, CRUD, and utilities
+//  See vault_backup.cpp for JSON export/import and backup functions
 // ============================================================
 
 #include <iostream>
@@ -14,6 +15,7 @@
 #include <random>
 #include <ctime>
 #include <iomanip>
+#include <algorithm>
 
 #include "password_manager.h"
 #include "crypto.h"
@@ -103,15 +105,45 @@ bool PasswordManager::LoadFromFile()
 
         PasswordEntry current;
         bool   inEntry      = false;
+        bool   inFolder     = false;
         bool   hasTags      = false;  // distinguishes new vs legacy format
         std::string legacyCat;        // old "category" field fallback
+        std::string folderNameBuf;    // accumulates name= inside a [FOLDER] block
 
         entries.clear();
+        knownFolders.clear();
 
         while (std::getline(iss, line))
         {
             if (!line.empty() && line.back() == '\r') line.pop_back();
             if (line.empty() || line[0] == '#') continue;
+
+            if (line == "[FOLDER]")
+            {
+                folderNameBuf.clear();
+                inFolder = true;
+                continue;
+            }
+
+            if (line == "[/FOLDER]")
+            {
+                if (!folderNameBuf.empty())
+                {
+                    if (std::find(knownFolders.begin(), knownFolders.end(), folderNameBuf)
+                            == knownFolders.end())
+                        knownFolders.push_back(folderNameBuf);
+                }
+                inFolder = false;
+                continue;
+            }
+
+            if (inFolder)
+            {
+                size_t sep2 = line.find('=');
+                if (sep2 != std::string::npos && line.substr(0, sep2) == "name")
+                    folderNameBuf = UnescapeValue(line.substr(sep2 + 1));
+                continue;
+            }
 
             if (line == "[ENTRY]")
             {
@@ -154,6 +186,7 @@ bool PasswordManager::LoadFromFile()
             else if (key == "modified") current.modifiedAt = val;
 
             // New fields
+            else if (key == "folder")   current.folder     = val;
             else if (key == "favorite") current.isFavorite = (val == "1");
             else if (key == "tags")
             {
@@ -213,6 +246,14 @@ bool PasswordManager::SaveToFile()
     oss << "# PassVault Data File v3 (encrypted with libsodium)\n";
     oss << "# Entries: " << entries.size() << "\n\n";
 
+    // Write folder names first (knownFolders + any referenced by entries)
+    for (const auto& fn : GetAllFolders())
+    {
+        oss << "[FOLDER]\n";
+        oss << "name=" << EscapeValue(fn) << "\n";
+        oss << "[/FOLDER]\n\n";
+    }
+
     for (const auto& e : entries)
     {
         oss << "[ENTRY]\n";
@@ -225,6 +266,8 @@ bool PasswordManager::SaveToFile()
         oss << "created="  << EscapeValue(e.createdAt)  << "\n";
         oss << "modified=" << EscapeValue(e.modifiedAt) << "\n";
         oss << "favorite=" << (e.isFavorite ? 1 : 0) << "\n";
+        if (!e.folder.empty())
+            oss << "folder=" << EscapeValue(e.folder) << "\n";
 
         // Tags (comma-separated; tag names must not contain commas)
         if (!e.tags.empty())
@@ -311,313 +354,6 @@ int PasswordManager::FindIndexById(const std::string& id) const
     for (int i = 0; i < (int)entries.size(); ++i)
         if (entries[i].id == id) return i;
     return -1;
-}
-
-
-// ============================================================
-//  JSON helpers (file-local)
-// ============================================================
-static std::string JsonEscape(const std::string& s)
-{
-    std::string out;
-    out.reserve(s.size() + 8);
-    for (char c : s)
-    {
-        switch (c)
-        {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n";  break;
-            case '\r': out += "\\r";  break;
-            case '\t': out += "\\t";  break;
-            default:
-                if ((unsigned char)c < 0x20)
-                {
-                    char buf[8];
-                    snprintf(buf, sizeof(buf), "\\u%04x", (unsigned char)c);
-                    out += buf;
-                }
-                else out += c;
-        }
-    }
-    return out;
-}
-
-static std::string JsonUnescape(const std::string& s)
-{
-    std::string out;
-    for (size_t i = 0; i < s.size(); ++i)
-    {
-        if (s[i] == '\\' && i + 1 < s.size())
-        {
-            char n = s[++i];
-            if      (n == 'n')  out += '\n';
-            else if (n == 'r')  out += '\r';
-            else if (n == 't')  out += '\t';
-            else if (n == '"')  out += '"';
-            else if (n == '\\') out += '\\';
-            else                out += n;
-        }
-        else out += s[i];
-    }
-    return out;
-}
-
-// Extract value from:  "key": "value"
-// Returns empty string if key not found.
-static std::string ExtractJsonStr(const std::string& line, const std::string& key)
-{
-    std::string search = "\"" + key + "\": \"";
-    size_t pos = line.find(search);
-    if (pos == std::string::npos) return "";
-    pos += search.size();
-
-    std::string raw;
-    bool escaped = false;
-    for (size_t i = pos; i < line.size(); ++i)
-    {
-        if (escaped)        { raw += line[i]; escaped = false; }
-        else if (line[i] == '\\') { raw += '\\'; escaped = true; }
-        else if (line[i] == '"')  break;
-        else                      raw += line[i];
-    }
-    return JsonUnescape(raw);
-}
-
-// Extract value from:  "key": true/false
-static bool ExtractJsonBool(const std::string& line, const std::string& key)
-{
-    std::string search = "\"" + key + "\": ";
-    size_t pos = line.find(search);
-    if (pos == std::string::npos) return false;
-    return line.substr(pos + search.size(), 4) == "true";
-}
-
-// Extract array from:  "tags": ["a", "b", "c"]
-static std::vector<std::string> ExtractJsonTags(const std::string& line)
-{
-    std::vector<std::string> result;
-    size_t start = line.find('[');
-    size_t end   = line.rfind(']');
-    if (start == std::string::npos || end == std::string::npos || start >= end)
-        return result;
-
-    size_t i = start + 1;
-    while (i < end)
-    {
-        size_t q1 = line.find('"', i);
-        if (q1 == std::string::npos || q1 >= end) break;
-        size_t q2 = line.find('"', q1 + 1);
-        if (q2 == std::string::npos || q2 > end)  break;
-        std::string tag = JsonUnescape(line.substr(q1 + 1, q2 - q1 - 1));
-        if (!tag.empty()) result.push_back(tag);
-        i = q2 + 1;
-    }
-    return result;
-}
-
-
-// ============================================================
-//  BuildJsonExport  -  shared JSON builder (in-memory string)
-// ============================================================
-std::string PasswordManager::BuildJsonExport() const
-{
-    std::ostringstream o;
-    o << "{\n";
-    o << "  \"passvault_version\": 1,\n";
-    o << "  \"exported_at\": \"" << JsonEscape(GetCurrentTimestamp()) << "\",\n";
-    o << "  \"entries\": [\n";
-
-    for (size_t ei = 0; ei < entries.size(); ++ei)
-    {
-        const auto& e    = entries[ei];
-        bool        last = (ei == entries.size() - 1);
-
-        o << "    {\n";
-        o << "      \"id\": \""       << JsonEscape(e.id)        << "\",\n";
-        o << "      \"title\": \""    << JsonEscape(e.title)     << "\",\n";
-        o << "      \"website\": \""  << JsonEscape(e.website)   << "\",\n";
-        o << "      \"username\": \"" << JsonEscape(e.username)  << "\",\n";
-        o << "      \"password\": \"" << JsonEscape(e.password)  << "\",\n";
-        o << "      \"notes\": \""    << JsonEscape(e.notes)     << "\",\n";
-        o << "      \"created\": \""  << JsonEscape(e.createdAt)  << "\",\n";
-        o << "      \"modified\": \"" << JsonEscape(e.modifiedAt) << "\",\n";
-        o << "      \"isFavorite\": " << (e.isFavorite ? "true" : "false") << ",\n";
-
-        o << "      \"tags\": [";
-        for (size_t ti = 0; ti < e.tags.size(); ++ti)
-        {
-            if (ti > 0) o << ", ";
-            o << "\"" << JsonEscape(e.tags[ti]) << "\"";
-        }
-        o << "],\n";
-
-        o << "      \"history\": [\n";
-        for (size_t hi = 0; hi < e.passwordHistory.size(); ++hi)
-        {
-            bool lastH = (hi == e.passwordHistory.size() - 1);
-            o << "        { \"ts\": \""
-              << JsonEscape(e.passwordHistory[hi].first)
-              << "\", \"pw\": \""
-              << JsonEscape(e.passwordHistory[hi].second)
-              << "\" }" << (lastH ? "" : ",") << "\n";
-        }
-        o << "      ]\n";
-        o << "    }" << (last ? "" : ",") << "\n";
-    }
-
-    o << "  ]\n}\n";
-    return o.str();
-}
-
-
-// ============================================================
-//  ExportBackup / ImportBackup
-//  Encrypted .pvbackup using the vault's own key - no extra
-//  password needed.  Layout: PVBKVLT(8) | nonce(24) | MAC+ct
-// ============================================================
-static const unsigned char VAULT_BACKUP_MAGIC[8] =
-    { 'P','V','B','K','V','L','T','\0' };
-
-bool PasswordManager::ExportBackup(const std::string& path) const
-{
-    std::string json      = BuildJsonExport();
-    auto        encrypted = CRYPTO::EncryptWithKey(json, encryptionKey);
-    if (encrypted.empty()) return false;
-
-    std::ofstream file(path, std::ios::binary);
-    if (!file.is_open()) return false;
-    file.write(reinterpret_cast<const char*>(VAULT_BACKUP_MAGIC), 8);
-    file.write(reinterpret_cast<const char*>(encrypted.data()), encrypted.size());
-    return true;
-}
-
-
-// ============================================================
-//  ParseJsonStream  -  shared JSON parser (stream → entries)
-//  merge=true  → skip entries whose id already exists
-//  merge=false → replace all entries
-// ============================================================
-bool PasswordManager::ParseJsonStream(std::istream& stream, bool merge)
-{
-    std::vector<PasswordEntry> imported;
-    PasswordEntry current;
-    bool inEntry   = false;
-    bool inHistory = false;
-
-    std::string line;
-    while (std::getline(stream, line))
-    {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-
-        size_t ns = line.find_first_not_of(" \t");
-        if (ns != std::string::npos) line = line.substr(ns);
-
-        if (!inEntry && !inHistory)
-        {
-            if (line == "{")
-            {
-                current  = PasswordEntry{};
-                inEntry  = true;
-            }
-        }
-        else if (inHistory)
-        {
-            if (line == "]") { inHistory = false; }
-            else if (line.find("\"ts\"") != std::string::npos)
-            {
-                std::string ts = ExtractJsonStr(line, "ts");
-                std::string pw = ExtractJsonStr(line, "pw");
-                if (!ts.empty())
-                    current.passwordHistory.push_back({ ts, pw });
-            }
-        }
-        else  // inEntry
-        {
-            if (line == "}," || line == "}")
-            {
-                if (!current.id.empty() || !current.title.empty())
-                    imported.push_back(current);
-                inEntry = false;
-            }
-            else if (line.find("\"history\"") != std::string::npos
-                     && line.find('[') != std::string::npos)
-            {
-                inHistory = true;
-            }
-            else
-            {
-                std::string v;
-                v = ExtractJsonStr(line, "id");       if (!v.empty()) current.id       = v;
-                v = ExtractJsonStr(line, "title");    if (!v.empty()) current.title    = v;
-                v = ExtractJsonStr(line, "website");  if (!v.empty()) current.website  = v;
-                v = ExtractJsonStr(line, "username"); if (!v.empty()) current.username = v;
-                v = ExtractJsonStr(line, "password"); if (!v.empty()) current.password = v;
-                v = ExtractJsonStr(line, "notes");    if (!v.empty()) current.notes    = v;
-                v = ExtractJsonStr(line, "created");  if (!v.empty()) current.createdAt  = v;
-                v = ExtractJsonStr(line, "modified"); if (!v.empty()) current.modifiedAt = v;
-
-                if (line.find("\"isFavorite\"") != std::string::npos)
-                    current.isFavorite = ExtractJsonBool(line, "isFavorite");
-                if (line.find("\"tags\"") != std::string::npos)
-                    current.tags = ExtractJsonTags(line);
-            }
-        }
-    }
-
-    if (merge)
-    {
-        for (const auto& imp : imported)
-        {
-            bool found = false;
-            for (const auto& ex : entries)
-                if (ex.id == imp.id) { found = true; break; }
-            if (!found)
-            {
-                PasswordEntry e = imp;
-                if (e.id.empty()) e.id = GenerateId();
-                entries.push_back(e);
-            }
-        }
-    }
-    else
-    {
-        entries = imported;
-        for (auto& e : entries)
-            if (e.id.empty()) e.id = GenerateId();
-    }
-
-    return SaveToFile();
-}
-
-
-// ============================================================
-//  ImportBackup  -  decrypt with vault key, then parse
-// ============================================================
-bool PasswordManager::ImportBackup(const std::string& path, bool merge)
-{
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) return false;
-    std::streamsize sz = file.tellg();
-    file.seekg(0, std::ios::beg);
-    if (sz < 8) return false;
-
-    std::vector<unsigned char> data(sz);
-    if (!file.read(reinterpret_cast<char*>(data.data()), sz)) return false;
-
-    // Validate magic header
-    if (memcmp(data.data(), VAULT_BACKUP_MAGIC, 8) != 0) return false;
-
-    // Strip magic, decrypt remainder
-    std::vector<unsigned char> payload(data.begin() + 8, data.end());
-    std::string json;
-    try { json = CRYPTO::DecryptWithKey(payload, encryptionKey); }
-    catch (...) { return false; }
-
-    if (json.empty()) return false;
-
-    std::istringstream ss(json);
-    return ParseJsonStream(ss, merge);
 }
 
 
@@ -815,6 +551,102 @@ bool PasswordManager::VerifyMasterPassword(const std::string& password) const
     std::string hash(std::istreambuf_iterator<char>(f), {});
     return CRYPTO::VerifyMasterPassword(password, hash);
 }
+
+
+// ============================================================
+//  Folder management
+// ============================================================
+void PasswordManager::AddFolder(const std::string& name)
+{
+    if (name.empty()) return;
+    if (std::find(knownFolders.begin(), knownFolders.end(), name) == knownFolders.end())
+    {
+        knownFolders.push_back(name);
+        SaveToFile();
+    }
+}
+
+bool PasswordManager::RemoveFolder(const std::string& name)
+{
+    // Refuse if any entry still lives in this folder
+    for (const auto& e : entries)
+        if (e.folder == name) return false;
+
+    auto it = std::find(knownFolders.begin(), knownFolders.end(), name);
+    if (it != knownFolders.end())
+    {
+        knownFolders.erase(it);
+        SaveToFile();
+    }
+    return true;
+}
+
+std::vector<std::string> PasswordManager::GetAllFolders() const
+{
+    std::vector<std::string> result = knownFolders;
+    // Also include folders referenced by entries that aren't in knownFolders
+    // (e.g. imported vaults from older format)
+    for (const auto& e : entries)
+        if (!e.folder.empty())
+            if (std::find(result.begin(), result.end(), e.folder) == result.end())
+                result.push_back(e.folder);
+    return result;
+}
+
+
+// ============================================================
+//  ChangeMasterPassword
+//  Verifies the current password, derives a new hash + wrapped
+//  key, and atomically replaces both on-disk files.
+//  Strategy: back up vault.key first so we can restore it if
+//  the auth write fails (keeps the vault openable in any case).
+// ============================================================
+bool PasswordManager::ChangeMasterPassword(const std::string& currentPw,
+                                           const std::string& newPw)
+{
+    // Vault must already be unlocked (encryptionKey must be in memory)
+    if (encryptionKey.empty()) return false;
+    if (!VerifyMasterPassword(currentPw)) return false;
+
+    auto dataDir  = std::filesystem::path(dataFilePath).parent_path();
+    std::string authPath = (dataDir / "master.auth").string();
+    std::string keyPath  = (dataDir / "vault.key").string();
+    std::string keyBak   = keyPath + ".bak";
+
+    // Pre-compute both outputs before touching any files
+    std::string newHash = CRYPTO::HashMasterPassword(newPw);
+    if (newHash.empty()) return false;
+
+    auto wrappedKey = CRYPTO::EncryptKeyWithPassword(newPw, encryptionKey);
+    if (wrappedKey.empty()) return false;
+
+    // Back up the current vault.key so we can restore on partial failure
+    std::error_code ec;
+    std::filesystem::copy_file(keyPath, keyBak,
+        std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) return false;
+
+    // Write new vault.key
+    {
+        std::ofstream f(keyPath, std::ios::binary | std::ios::trunc);
+        if (!f.is_open()) { std::filesystem::rename(keyBak, keyPath, ec); return false; }
+        f.write(reinterpret_cast<const char*>(wrappedKey.data()), wrappedKey.size());
+        if (!f.good())    { std::filesystem::rename(keyBak, keyPath, ec); return false; }
+    }
+
+    // Write new master.auth
+    {
+        std::ofstream f(authPath, std::ios::binary | std::ios::trunc);
+        if (!f.is_open()) { std::filesystem::rename(keyBak, keyPath, ec); return false; }
+        f.write(newHash.c_str(), newHash.size());
+        if (!f.good())    { std::filesystem::rename(keyBak, keyPath, ec); return false; }
+    }
+
+    // Both files written; remove the backup
+    std::filesystem::remove(keyBak, ec);
+    return true;
+}
+
 
 void PasswordManager::RemoveTag(const std::string& tag)
 {

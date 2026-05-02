@@ -14,9 +14,9 @@
 
 namespace SETTINGS
 {
-    // --------------------------------------------------------
+    // ============================================================
     //  Palette definition  (R, G, B, A)
-    // --------------------------------------------------------
+    // ============================================================
     const float TAG_PALETTE[10][4] =
     {
         { 0.310f, 0.760f, 0.970f, 1.0f },  // 0  Sky Blue
@@ -31,15 +31,9 @@ namespace SETTINGS
         { 0.700f, 0.700f, 0.950f, 1.0f },  // 9  Lavender
     };
 
-    const char* TAG_PALETTE_NAMES[10] =
-    {
-        "Sky Blue", "Amber",  "Green",   "Pink",    "Slate",
-        "Purple",   "Orange", "Red",     "Teal",    "Lavender"
-    };
-
-    // --------------------------------------------------------
+    // ============================================================
     //  Tag colour registry  -  pre-seeded with legacy categories
-    // --------------------------------------------------------
+    // ============================================================
     std::map<std::string, int> tagColorMap =
     {
         { "Personal", 0 },
@@ -49,16 +43,18 @@ namespace SETTINGS
         { "Other",    4 },
     };
 
-    // --------------------------------------------------------
+    // ============================================================
     //  Values loaded from disk
-    // --------------------------------------------------------
-    int savedTheme       = 0;
-    int savedAutoLockIdx = 1;   // default: 1 minute
+    // ============================================================
+    int   savedTheme         = 0;
+    int   savedAutoLockIdx   = 1;      // default: 1 minute
+    bool  savedToastsEnabled = true;
+    float savedToastDuration = 4.0f;   // seconds
 
 
-    // --------------------------------------------------------
+    // ============================================================
     //  Internal helpers
-    // --------------------------------------------------------
+    // ============================================================
     static std::string GetSettingsPath()
     {
         auto dataDir = std::filesystem::current_path() / "data";
@@ -68,9 +64,9 @@ namespace SETTINGS
     }
 
 
-    // --------------------------------------------------------
+    // ============================================================
     //  GetTagColor  -  returns ImVec4 for a named tag
-    // --------------------------------------------------------
+    // ============================================================
     ImVec4 GetTagColor(const std::string& tagName)
     {
         auto it  = tagColorMap.find(tagName);
@@ -87,10 +83,10 @@ namespace SETTINGS
     }
 
 
-    // --------------------------------------------------------
+    // ============================================================
     //  Load  -  reads ./data/settings.ini
     //  Populates savedTheme, savedAutoLockIdx, tagColorMap.
-    // --------------------------------------------------------
+    // ============================================================
     void Load()
     {
         std::ifstream file(GetSettingsPath());
@@ -110,8 +106,10 @@ namespace SETTINGS
 
             try
             {
-                if      (key == "theme")                savedTheme       = std::stoi(val);
-                else if (key == "autolock")             savedAutoLockIdx = std::stoi(val);
+                if      (key == "theme")                savedTheme         = std::stoi(val);
+                else if (key == "autolock")             savedAutoLockIdx   = std::stoi(val);
+                else if (key == "toasts_enabled")       savedToastsEnabled = (std::stoi(val) != 0);
+                else if (key == "toast_duration")       savedToastDuration = std::stof(val);
                 else if (key.rfind("tagcolor_", 0) == 0)
                     tagColorMap[key.substr(9)] = std::stoi(val);
             }
@@ -119,22 +117,25 @@ namespace SETTINGS
         }
 
         // Clamp to valid ranges
-        savedTheme       = std::max(0, std::min(savedTheme,       1));
-        savedAutoLockIdx = std::max(0, std::min(savedAutoLockIdx, 4));
+        savedTheme         = std::max(0, std::min(savedTheme,         1));
+        savedAutoLockIdx   = std::max(0, std::min(savedAutoLockIdx,   4));
+        savedToastDuration = std::max(2.0f, std::min(savedToastDuration, 8.0f));
     }
 
 
-    // --------------------------------------------------------
+    // ============================================================
     //  Save  -  writes ./data/settings.ini
-    // --------------------------------------------------------
-    void Save(int theme, int autoLockIdx)
+    // ============================================================
+    void Save(int theme, int autoLockIdx, bool toastsEnabled, float toastDuration)
     {
         std::ofstream file(GetSettingsPath());
         if (!file.is_open()) return;
 
         file << "# PassVault Settings\n";
-        file << "theme="    << theme       << "\n";
-        file << "autolock=" << autoLockIdx << "\n";
+        file << "theme="           << theme             << "\n";
+        file << "autolock="        << autoLockIdx       << "\n";
+        file << "toasts_enabled="  << (toastsEnabled ? 1 : 0) << "\n";
+        file << "toast_duration="  << toastDuration     << "\n";
 
         for (const auto& [name, idx] : tagColorMap)
             file << "tagcolor_" << name << "=" << idx << "\n";

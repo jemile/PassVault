@@ -5,7 +5,6 @@
 #pragma once
 #include <string>
 #include <vector>
-#include <algorithm>
 
 // ============================================================
 //  PasswordEntry  -  one stored credential
@@ -19,6 +18,7 @@ struct PasswordEntry
     std::string password;   // Plaintext (vault file is encrypted at rest)
     std::vector<std::string> tags;  // User-defined tags; replaces single category
     std::string notes;      // Freeform notes
+    std::string folder;     // Optional folder name (flat; empty = no folder)
     std::string createdAt;  // ISO-ish timestamp string
     std::string modifiedAt;
 
@@ -37,6 +37,7 @@ class PasswordManager
 {
 public:
     std::vector<PasswordEntry> entries;
+    std::vector<std::string>  knownFolders;   // explicitly created folders (persisted)
     std::string dataFilePath;
 
     PasswordManager();
@@ -78,6 +79,17 @@ public:
 
     // Removes a tag from ALL entries that have it and saves the vault
     void RemoveTag(const std::string& tag);
+
+    // Folder management
+    void AddFolder(const std::string& name);
+    // Returns false (and does nothing) if any entry still references the folder.
+    bool RemoveFolder(const std::string& name);
+    // All folder names: knownFolders + any referenced by entries (for import compat).
+    std::vector<std::string> GetAllFolders() const;
+
+    // Re-hashes and re-wraps the vault key under a new master password.
+    // Returns false if currentPw is wrong or the write fails.
+    bool ChangeMasterPassword(const std::string& currentPw, const std::string& newPw);
 
 private:
     // Single-line escaping for the encrypted vault file format

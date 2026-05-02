@@ -34,6 +34,11 @@
 #include "sun_moon_font.h"
 #include <commdlg.h>   // GetOpenFileName / GetSaveFileName
 #include "updater.h"
+#include "tray.h"
+
+// glfwGetWin32Window – needed for tray init
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 
 
 // ============================================================
@@ -45,7 +50,6 @@ namespace FRAME
     int         width       = 1280;
     int         height      = 720;
     int         theme = 0;
-    int         filterTheme = -1;   // -1 forces theme apply on first frame
     bool        shouldExit  = false;
     bool        settingsTab = false;
 
@@ -58,8 +62,11 @@ namespace FRAME
     ImFont*     font        = nullptr;
     ImFont*     fontTitle   = nullptr;
     ImFont*     fontSmall   = nullptr;
-    ImFont*     fontTiny = nullptr;
     ImFont*     sunMoonFontBig = nullptr;
+
+    // App logo texture (loaded from embedded .ico resource at startup)
+    GLuint      logoTexture = 0;
+    int         logoTexSize = 0;  // width == height (square icon)
 }
 
 
@@ -88,6 +95,7 @@ static void CheckInitialAppState()
 static void ApplyThemeIfChanged()
 {
     using namespace FRAME;
+    static int filterTheme = -1;  // -1 forces apply on first frame
 
     if (theme == filterTheme) return;
 
@@ -149,6 +157,18 @@ static std::vector<int> BuildFilteredList()
     for (int i = 0; i < (int)g_ui.pm.entries.size(); ++i)
     {
         const auto& e = g_ui.pm.entries[i];
+
+        // Folder navigation filter
+        // root view  (filterFolder empty) -> show only entries with no folder
+        // folder view (filterFolder set)  -> show only entries in that folder
+        if (g_ui.filterFolder.empty())
+        {
+            if (!e.folder.empty()) continue;          // hide foldered entries at root
+        }
+        else
+        {
+            if (e.folder != g_ui.filterFolder) continue;
+        }
 
         // Favorites filter
         if (g_ui.filterFavorites && !e.isFavorite) continue;
@@ -214,10 +234,6 @@ static void SetupImGuiStyle()
         (void*)HattenFont, sizeof(HattenFont), 16.0f,
         &cfg, io.Fonts->GetGlyphRangesCyrillic());
 
-    fontTiny = io.Fonts->AddFontFromMemoryTTF(
-        (void*)HattenFont, sizeof(HattenFont), 12.0f,
-        &cfg, io.Fonts->GetGlyphRangesCyrillic());
-
     sunMoonFontBig = io.Fonts->AddFontFromMemoryTTF(
         (void*)SunMoonFont, sizeof(SunMoonFont), 32.0f,
         &cfg, io.Fonts->GetGlyphRangesCyrillic());
@@ -247,6 +263,72 @@ static void SetupImGuiStyle()
     s.ButtonTextAlign    = ImVec2(0.5f, 0.5f);
     s.SeparatorTextAlign = ImVec2(0.0f, 0.5f);
     s.IndentSpacing      = 16.0f;
+}
+
+
+// ============================================================
+//  LoadIconTexture
+//  Loads the embedded .ico resource (IDI_ICON1 = 101) at the
+//  requested pixel size and uploads it as an OpenGL RGBA texture.
+//  Returns the GL texture ID, or 0 on failure.
+// ============================================================
+static GLuint LoadIconTexture(int size)
+{
+    HICON hIcon = (HICON)LoadImage(
+        GetModuleHandle(NULL),
+        MAKEINTRESOURCE(101),
+        IMAGE_ICON, size, size,
+        LR_DEFAULTCOLOR);
+    if (!hIcon) return 0;
+
+    // Create a 32bpp top-down DIB section to render the icon into
+    BITMAPINFOHEADER bi = {};
+    bi.biSize        = sizeof(bi);
+    bi.biWidth       = size;
+    bi.biHeight      = -size;   // negative = top-down row order
+    bi.biPlanes      = 1;
+    bi.biBitCount    = 32;
+    bi.biCompression = BI_RGB;
+
+    void*  bits  = nullptr;
+    HDC    hdc   = GetDC(NULL);
+    HDC    memDC = CreateCompatibleDC(hdc);
+    HBITMAP hbm  = CreateDIBSection(hdc, (BITMAPINFO*)&bi,
+                                    DIB_RGB_COLORS, &bits, NULL, 0);
+    HGDIOBJ old  = SelectObject(memDC, hbm);
+
+    // Fill with transparent black before drawing so alpha is meaningful
+    RECT rc = { 0, 0, size, size };
+    FillRect(memDC, &rc, (HBRUSH)GetStockObject(BLACK_BRUSH));
+    DrawIconEx(memDC, 0, 0, hIcon, size, size, 0, NULL, DI_NORMAL);
+    GdiFlush();
+
+    // Windows stores pixels as BGRA; convert to RGBA for OpenGL
+    std::vector<uint8_t> rgba(size * size * 4);
+    const uint8_t* src = reinterpret_cast<const uint8_t*>(bits);
+    for (int i = 0; i < size * size; ++i)
+    {
+        rgba[i * 4 + 0] = src[i * 4 + 2];  // R  <- B
+        rgba[i * 4 + 1] = src[i * 4 + 1];  // G  <- G
+        rgba[i * 4 + 2] = src[i * 4 + 0];  // B  <- R
+        rgba[i * 4 + 3] = src[i * 4 + 3];  // A  <- A
+    }
+
+    SelectObject(memDC, old);
+    DeleteObject(hbm);
+    DeleteDC(memDC);
+    ReleaseDC(NULL, hdc);
+    DestroyIcon(hIcon);
+
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size, size, 0,
+                 GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return tex;
 }
 
 
@@ -281,9 +363,9 @@ void FRAME::ExportBackup()
     if (GetSaveFileNameA(&ofn))
     {
         if (g_ui.pm.ExportBackup(szFile))
-            RENDER::ShowToast("Backup exported!", g_ui.toastMsg, g_ui.toastTimer);
+            RENDER::ShowToast("Backup exported!", g_ui.toasts);
         else
-            RENDER::ShowToast("Export failed.", g_ui.toastMsg, g_ui.toastTimer);
+            RENDER::ShowToast("Export failed.", g_ui.toasts, ToastType::Error);
     }
 }
 
@@ -306,10 +388,10 @@ void FRAME::ImportBackup()
             char msg[80];
             snprintf(msg, sizeof(msg), "Imported %d entr%s.",
                 added, added == 1 ? "y" : "ies");
-            RENDER::ShowToast(msg, g_ui.toastMsg, g_ui.toastTimer);
+            RENDER::ShowToast(msg, g_ui.toasts);
         }
         else
-            RENDER::ShowToast("Import failed.", g_ui.toastMsg, g_ui.toastTimer);
+            RENDER::ShowToast("Import failed.", g_ui.toasts, ToastType::Error);
     }
 }
 
@@ -327,10 +409,11 @@ static void RenderTitleBar()
     ImVec2      winSP = ImGui::GetWindowPos();
 
     const float TH        = 40.0f;   // title bar height (px)
-    const float SETTINGSW = 215.0f;  // settings + theme + close total width
-    const float THEMEW    = 105.0f;  // dark/light button width
-    const float XW        = 46.0f;   // close button width
-    const float LOGOW     = 150.0f;  // logo / left drag-zone width
+    const float SETTINGSW = 261.0f;  // settings + theme + minimize + close total width
+    const float THEMEW    = 151.0f;  // theme button offset from right
+    const float MINIMIZEW = 92.0f;   // minimize button offset from right (2 × XW)
+    const float XW        = 46.0f;   // close / minimize button width
+    const float LOGOW     = 180.0f;  // logo / left drag-zone width
 
     // Background + accent underline
     dl->AddRectFilled(
@@ -340,28 +423,53 @@ static void RenderTitleBar()
     dl->AddLine(
         ImVec2(winSP.x,                winSP.y + TH - 1),
         ImVec2(winSP.x + (float)width, winSP.y + TH - 1),
-        IM_COL32(108, 100, 220, 200), 1.5f);
+        THEME::TCU(IM_COL32(108, 100, 220, 200), IM_COL32(40, 110, 185, 200), theme), 1.5f);
 
-    // Logo (draw-list only - no cursor interaction)
+    // Logo: icon + "PassVault vX.X.X" text, left-aligned in the title bar
     {
+        const float ICON_PAD  = 10.0f;   // left margin
+        const float ICON_GAP  = 10.0f;    // gap between icon and text
+        float       drawX     = winSP.x + ICON_PAD;
+        float       iconSz    = (float)logoTexSize;
 
+        if (logoTexture != 0)
+        {
+            float iconY = winSP.y + (TH - iconSz) * 0.5f;
+
+            const float pad = 3.5f;
+            dl->AddRectFilled(
+                ImVec2(drawX - pad, iconY - pad),
+                ImVec2(drawX + iconSz + pad, iconY + iconSz + pad),
+                THEME::TCU(IM_COL32(168, 158, 255, 155), IM_COL32(30, 100, 200, 155), theme), 
+                7.0f);
+
+
+            dl->AddImage(
+                (ImTextureID)(uintptr_t)logoTexture,
+                ImVec2(drawX, iconY),
+                ImVec2(drawX + iconSz, iconY + iconSz));
+            drawX += iconSz + ICON_GAP;
+        }
 
         static const std::string logo =
             "PassVault " + std::string(UPDATER::CURRENT_VERSION);
 
         ImVec2 tsz = fontTitle->CalcTextSizeA(26.0f, FLT_MAX, 0.0f, logo.c_str());
         dl->AddText(fontTitle, 26.0f,
-            ImVec2(winSP.x + 14.0f, winSP.y + (TH - tsz.y) * 0.5f),
-            IM_COL32(168, 158, 255, 255), logo.c_str());
+            ImVec2(drawX, winSP.y + (TH - tsz.y) * 0.5f),
+            THEME::TCU(IM_COL32(168, 158, 255, 255), IM_COL32(30, 100, 200, 255), theme),
+            logo.c_str());
     }
 
-    // File / View / Help menus
+    // File - View - About menus
     float menuY = (TH - ImGui::GetFrameHeight()) * 0.5f;
     ImGui::SetCursorPos(ImVec2(LOGOW, menuY));
 
     ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.235f, 0.220f, 0.470f, 0.7f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.180f, 0.168f, 0.360f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, THEME::TC(
+        ImVec4(0.235f, 0.220f, 0.470f, 0.7f), ImVec4(0.18f, 0.50f, 0.84f, 0.18f), theme));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  THEME::TC(
+        ImVec4(0.180f, 0.168f, 0.360f, 1.0f), ImVec4(0.14f, 0.42f, 0.75f, 0.30f), theme));
     ImGui::PushStyleColor(ImGuiCol_Text, THEME::TC(
         ImVec4(0.886f, 0.902f, 0.941f, 1.0f),
         ImVec4(0.100f, 0.105f, 0.120f, 1.0f), theme));
@@ -372,9 +480,9 @@ static void RenderTitleBar()
         ImGui::OpenPopup("FilePopup");
 
     ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 10.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 10));   
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 6));    
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));       
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 10));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 6));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
     if (ImGui::BeginPopup("FilePopup"))
     {
         if (ImGui::MenuItem("New Entry", "Ctrl+N"))
@@ -473,23 +581,13 @@ static void RenderTitleBar()
         }
     }
 
-    // Toast notification (centered in title bar)
-    if (g_ui.toastTimer > 0.0f)
-    {
-        g_ui.toastTimer -= ImGui::GetIO().DeltaTime;
-        float  alpha = std::min(g_ui.toastTimer, 1.0f);
-        ImVec2 tsz   = fontSmall->CalcTextSizeA(13.0f, FLT_MAX, 0.0f, g_ui.toastMsg);
-        dl->AddText(fontSmall, 13.0f,
-            ImVec2(winSP.x + ((float)width - tsz.x) * 0.5f,
-                   winSP.y + (TH - tsz.y) * 0.5f),
-            IM_COL32(52, 199, 120, (ImU32)(alpha * 255.0f)),
-            g_ui.toastMsg);
-    }
+    // Toast notifications (bottom-right stack)
+    RENDER::RenderToasts(g_ui.toasts, ImGui::GetIO().DeltaTime, fontSmall);
 
     // Settings toggle button
     ImGui::SetCursorPos(ImVec2((float)width - SETTINGSW, 2));
     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
-    if (RENDER::PurpleButton("Settings", ImVec2(XW * 2.0f, TH - 5.0f)))
+    if (RENDER::ThemeButton("Settings", ImVec2(XW * 2.0f, TH - 5.0f)))
         settingsTab = true;
     ImGui::PopStyleVar();
 
@@ -518,9 +616,25 @@ static void RenderTitleBar()
     if (ImGui::Button(icon, ImVec2(XW, TH)))
     {
         if (++theme > 1) theme = 0;
-        SETTINGS::Save(theme, autoLockIndex);  // persist theme change
+        SETTINGS::Save(theme, autoLockIndex, g_ui.toastsEnabled, g_ui.toastDuration);
     }
     ImGui::PopFont();
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar();
+
+    // Minimize to tray button  ( - )
+    ImGui::SetCursorPos(ImVec2((float)width - MINIMIZEW, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0, 0, 0, 0));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, THEME::TC(
+        ImVec4(0.24f, 0.22f, 0.46f, 1.0f), ImVec4(0.18f, 0.50f, 0.84f, 0.20f), theme));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, THEME::TC(
+        ImVec4(0.18f, 0.16f, 0.35f, 1.0f), ImVec4(0.14f, 0.42f, 0.75f, 0.30f), theme));
+    ImGui::PushStyleColor(ImGuiCol_Text, THEME::TC(
+        ImVec4(0.90f, 0.90f, 0.90f, 1.0f),
+        ImVec4(0.18f, 0.16f, 0.14f, 1.0f), theme));
+    if (ImGui::Button("  -  ", ImVec2(XW, TH)))
+        TRAY::MinimizeToTray();
     ImGui::PopStyleColor(4);
     ImGui::PopStyleVar();
 
@@ -580,7 +694,7 @@ static void RenderResizeGrip()
     // Visual: Resize indicator
     {
         ImVec2 g0 = ImVec2(winSP.x + (float)width - GRIP, winSP.y + (float)height - GRIP);
-        ImU32  gc = IM_COL32(108, 100, 220, 150);
+        ImU32  gc = THEME::TCU(IM_COL32(108, 100, 220, 150), IM_COL32(40, 110, 185, 150), theme);
         for (int i = 1; i <= 3; ++i)
         {
             float off = (float)(i * 5);
@@ -723,12 +837,39 @@ static void RenderLoop()
 
     while (!glfwWindowShouldClose(FRAME::window))
     {
-        ApplyThemeIfChanged();
+        // When minimized to tray, block until an event arrives (≤50 ms) so we
+        // don't burn CPU rendering an invisible window.
+        if (TRAY::IsHidden())
+            glfwWaitEventsTimeout(0.05);
+        else
+            glfwPollEvents();
+
+        // Handle tray-originated actions
+        // These flags are set inside the Win32 subclass proc on the main thread,
+        // so exchange() is safe without additional locking.
+        if (TRAY::wantsShow.exchange(false))
+            TRAY::RestoreWindow();
+
+        if (TRAY::wantsLock.exchange(false))
+        {
+            g_ui.appState      = AppState::Locked;
+            g_ui.lockErrMsg[0] = '\0';
+            memset(g_ui.lockPwBuf, 0, sizeof(g_ui.lockPwBuf));
+            TRAY::RestoreWindow();  // bring window up so user can re-unlock
+        }
+
+        if (TRAY::wantsExit.exchange(false))
+            FRAME::shouldExit = true;
 
         if (FRAME::shouldExit)
             glfwSetWindowShouldClose(FRAME::window, true);
 
-        glfwPollEvents();
+        // Skip render entirely while the window is hidden to the tray
+        if (TRAY::IsHidden()) continue;
+
+        // Normal render pass
+        ApplyThemeIfChanged();
+        RENDER::g_theme = FRAME::theme;  // keep render module in sync
 
         glClear(GL_COLOR_BUFFER_BIT);
         if (FRAME::theme == 0)
@@ -760,12 +901,16 @@ void FRAME::SetupFrame()
     // Load persisted settings before opening the window so the
     // correct theme is applied from the very first frame.
     SETTINGS::Load();
-    FRAME::theme       = SETTINGS::savedTheme;
+    FRAME::theme         = SETTINGS::savedTheme;
     FRAME::autoLockIndex = SETTINGS::savedAutoLockIdx;
     {
         const float timeouts[] = { 30.0f, 60.0f, 120.0f, 180.0f, -1.0f };
         FRAME::autoLockTimeout = timeouts[FRAME::autoLockIndex];
     }
+    g_ui.toastsEnabled  = SETTINGS::savedToastsEnabled;
+    g_ui.toastDuration  = SETTINGS::savedToastDuration;
+    RENDER::g_toastsEnabled = g_ui.toastsEnabled;
+    RENDER::g_toastDuration = g_ui.toastDuration;
 
     InitGlfwFlags();
 
@@ -775,6 +920,22 @@ void FRAME::SetupFrame()
         std::cout << "Failed to create GLFW window\n";
         glfwTerminate();
         return;
+    }
+
+    // System tray - must be set up after the HWND exists
+    TRAY::Init(glfwGetWin32Window(window));
+
+    // Set the window icon in the taskbar and title bar.
+    // GLFW does not pick up RC-embedded icons automatically, so we send
+    // WM_SETICON explicitly after the HWND is created.
+    {
+        HWND hwnd = glfwGetWin32Window(window);
+        HICON hBig = (HICON)LoadImage(GetModuleHandle(NULL),
+            MAKEINTRESOURCE(101), IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR);
+        HICON hSmall = (HICON)LoadImage(GetModuleHandle(NULL),
+            MAKEINTRESOURCE(101), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+        if (hBig)   SendMessage(hwnd, WM_SETICON, ICON_BIG,   (LPARAM)hBig);
+        if (hSmall) SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hSmall);
     }
 
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
@@ -797,6 +958,11 @@ void FRAME::SetupFrame()
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
+    // Load app icon as an OpenGL texture for the in-app title bar logo.
+    // 24px renders crisply at the 40px title bar height.
+    FRAME::logoTexture = LoadIconTexture(24);
+    FRAME::logoTexSize = 24;
+
     RenderLoop();
 }
 
@@ -806,6 +972,8 @@ void FRAME::SetupFrame()
 // ============================================================
 void FRAME::UnloadFrame()
 {
+    TRAY::Destroy();  // remove tray icon before window is destroyed
+
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
