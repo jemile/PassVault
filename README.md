@@ -5,7 +5,6 @@
 Built in C++ with Dear ImGui. No cloud. No accounts. No telemetry. Your data never leaves your machine.
 
 ### Screenshots
-
 ![PassVault Screenshot I](screenshot.png)
 ![PassVault Screenshot II](screenshot2.png)
 ![PassVault Screenshot III](screenshot3.png)
